@@ -92,51 +92,87 @@ def on_image_drop(
     )
 
 
+def on_clear(state: dict) -> tuple:
+    """会話履歴をリセットする。"""
+    state["conversation_history"] = []
+    return state, []
+
+
 def on_send(
     user_input: str,
     state: dict,
     chatbot: list,
     model_label: str,
-) -> tuple:
+):
     """
-    「送信」ボタン：Qwen3-VL に問い合わせて会話を進める。
+    「送信」ボタン：Qwen3-VL にストリーミングで問い合わせる。
     モデル未ロードの場合は自動的にロードする。
     """
     if not user_input.strip():
-        return state, chatbot, gr.update(), gr.update(), "", gr.update()
+        yield state, chatbot, gr.update(), gr.update(), "", gr.update()
+        return
 
     auto_load_status = None
     if not qwen_client.is_loaded():
-        model_id = qwen_client.MODEL_PRESETS.get(model_label, model_label)
-        auto_load_status = qwen_client.load_model(model_id)
-        if not qwen_client.is_loaded():
-            chatbot = chatbot + [
+        # ロード中であることを表示
+        yield (
+            state,
+            chatbot + [
                 {"role": "user", "content": user_input},
-                {"role": "assistant", "content": f"モデルのロードに失敗しました: {auto_load_status}"},
-            ]
-            return state, chatbot, gr.update(), gr.update(), "", gr.update(value=auto_load_status)
+                {"role": "assistant", "content": "モデルをロード中..."},
+            ],
+            gr.update(), gr.update(), "", gr.update(value="ロード中..."),
+        )
+        model_id = qwen_client.MODEL_PRESETS.get(model_label, model_label)
+        try:
+            auto_load_status = qwen_client.load_model(model_id)
+        except RuntimeError as e:
+            auto_load_status = str(e)
+        if not qwen_client.is_loaded():
+            yield (
+                state,
+                chatbot + [
+                    {"role": "user", "content": user_input},
+                    {"role": "assistant", "content": f"モデルのロードに失敗しました: {auto_load_status}"},
+                ],
+                gr.update(), gr.update(), "", gr.update(value=auto_load_status),
+            )
+            return
+
+    # ストリーミング生成
+    partial_response = ""
+    streaming_chatbot = chatbot + [
+        {"role": "user", "content": user_input},
+        {"role": "assistant", "content": ""},
+    ]
 
     try:
-        response = qwen_client.query(
+        for token in qwen_client.query_stream(
             conversation_history=state["conversation_history"],
             user_input=user_input,
             current_image=state.get("current_image"),
             positive_prompt=state.get("positive_prompt", ""),
             negative_prompt=state.get("negative_prompt", ""),
-        )
+        ):
+            partial_response += token
+            streaming_chatbot[-1]["content"] = partial_response
+            yield state, streaming_chatbot, gr.update(), gr.update(), "", gr.update()
     except Exception as e:
-        chatbot = chatbot + [
-            {"role": "user", "content": user_input},
-            {"role": "assistant", "content": f"エラーが発生しました: {e}"},
-        ]
-        return state, chatbot, gr.update(), gr.update(), "", gr.update()
+        yield (
+            state,
+            chatbot + [
+                {"role": "user", "content": user_input},
+                {"role": "assistant", "content": f"エラーが発生しました: {e}"},
+            ],
+            gr.update(), gr.update(), "", gr.update(),
+        )
+        return
 
-    positive_new, negative_new, display_text = parse_prompt_update(response)
+    positive_new, negative_new, display_text = parse_prompt_update(partial_response)
 
-    # 会話履歴を更新（messages 形式）
-    # 画像は履歴に含めず current_image として別管理する（VRAM/RAM の蓄積を防ぐ）
+    # 会話履歴を更新（画像は current_image として別管理）
     state["conversation_history"].append({"role": "user", "content": [{"type": "text", "text": user_input}]})
-    state["conversation_history"].append({"role": "assistant", "content": response})
+    state["conversation_history"].append({"role": "assistant", "content": partial_response})
 
     # プロンプト更新があれば state に反映
     positive_update = gr.update()
@@ -148,13 +184,13 @@ def on_send(
         state["negative_prompt"] = negative_new
         negative_update = gr.update(value=negative_new)
 
-    chatbot = chatbot + [
+    # 最終 yield: [PROMPT_UPDATE] ブロックを除いた表示テキストに差し替え
+    final_chatbot = chatbot + [
         {"role": "user", "content": user_input},
         {"role": "assistant", "content": display_text},
     ]
-
     status_update = gr.update(value=auto_load_status) if auto_load_status else gr.update()
-    return state, chatbot, positive_update, negative_update, "", status_update
+    yield state, final_chatbot, positive_update, negative_update, "", status_update
 
 
 def on_generate(
@@ -294,25 +330,25 @@ def build_ui():
                     label="会話 (Qwen3-VL)",
                     height=480,
                 )
+                user_input = gr.Textbox(
+                    placeholder="Qwen3-VL へのメッセージを入力...",
+                    label="",
+                    lines=1,
+                )
                 with gr.Row():
-                    user_input = gr.Textbox(
-                        placeholder="Qwen3-VL へのメッセージを入力...",
-                        label="",
-                        scale=5,
-                        lines=1,
-                    )
                     send_btn = gr.Button("送信", scale=1, variant="secondary")
+                    clear_btn = gr.Button("クリア", scale=1, variant="stop")
 
                 # ---- モデル設定 ----
-                with gr.Row():
-                    model_dropdown = gr.Dropdown(
-                        choices=list(qwen_client.MODEL_PRESETS.keys()),
-                        value=saved_model if saved_model in qwen_client.MODEL_PRESETS else list(qwen_client.MODEL_PRESETS.keys())[0],
-                        label="Qwen3-VL モデル",
-                        scale=3,
-                    )
-                    load_btn = gr.Button("モデルをロード", scale=1)
-                with gr.Row():
+                with gr.Accordion("モデル設定", open=False):
+                    with gr.Row():
+                        model_dropdown = gr.Dropdown(
+                            choices=list(qwen_client.MODEL_PRESETS.keys()),
+                            value=saved_model if saved_model in qwen_client.MODEL_PRESETS else list(qwen_client.MODEL_PRESETS.keys())[0],
+                            label="Qwen3-VL モデル",
+                            scale=3,
+                        )
+                        load_btn = gr.Button("モデルをロード", scale=1)
                     model_status = gr.Textbox(
                         value="モデル未ロード",
                         label="モデルステータス",
@@ -362,6 +398,12 @@ def build_ui():
                 width_input, height_input, seed_input,
                 image_status,
             ],
+        )
+
+        clear_btn.click(
+            fn=on_clear,
+            inputs=[state],
+            outputs=[state, chatbot],
         )
 
         send_btn.click(

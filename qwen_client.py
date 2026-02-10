@@ -4,9 +4,11 @@ Qwen3-VL 推論クライアント（transformers ライブラリ経由）
 アプリ起動時に 1 回だけモデルをロードし、グローバルに保持する。
 """
 
+import threading
+
 import torch
 from PIL import Image
-from transformers import AutoModelForImageTextToText, AutoProcessor
+from transformers import AutoModelForImageTextToText, AutoProcessor, TextIteratorStreamer
 from qwen_vl_utils import process_vision_info
 
 # 利用可能なモデルプリセット
@@ -52,29 +54,14 @@ def is_loaded() -> bool:
     return _model is not None and _processor is not None
 
 
-def query(
+def _build_inputs(
     conversation_history: list[dict],
     user_input: str,
-    current_image: Image.Image | None,
+    current_image: "Image.Image | None",
     positive_prompt: str,
     negative_prompt: str,
-) -> str:
-    """
-    Qwen3-VL に問い合わせてレスポンスを返す。
-
-    Args:
-        conversation_history: これまでの会話履歴（messages 形式）
-        user_input: ユーザーの入力テキスト
-        current_image: 最新の生成画像（なければ None）
-        positive_prompt: 現在の Positive プロンプト
-        negative_prompt: 現在の Negative プロンプト
-
-    Returns:
-        モデルの返答テキスト
-    """
-    if not is_loaded():
-        raise RuntimeError("モデルがロードされていません。先にモデルをロードしてください。")
-
+):
+    """メッセージを組み立て、processor に通してテンソルを返す。"""
     system_prompt = (
         "あなたは画像生成のプロンプトエンジニアリングの専門家です。\n"
         "ユーザーの意図を理解し、Stable Diffusion（Illustrious チェックポイント）向けの\n"
@@ -89,7 +76,6 @@ def query(
         "[/PROMPT_UPDATE]"
     )
 
-    # ユーザーメッセージのコンテンツを組み立て（画像があれば含める）
     user_content: list[dict] = []
     if current_image is not None:
         user_content.append({"type": "image", "image": current_image})
@@ -101,14 +87,18 @@ def query(
         {"role": "user", "content": user_content},
     ]
 
-    text = _processor.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
-
-    # messages 全体から画像・動画を抽出（会話履歴中の画像も含む）
+    try:
+        # Qwen3 系は thinking モードがデフォルト ON なので明示的に無効化
+        text = _processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
+        )
+    except TypeError:
+        text = _processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
     image_inputs, video_inputs = process_vision_info(messages)
 
-    inputs = _processor(
+    return _processor(
         text=[text],
         images=image_inputs if image_inputs else None,
         videos=video_inputs if video_inputs else None,
@@ -116,21 +106,40 @@ def query(
         return_tensors="pt",
     ).to(_model.device)
 
-    with torch.inference_mode():
-        output_ids = _model.generate(**inputs, max_new_tokens=512)
 
-    # 入力トークンを除いた生成部分のみデコード
-    generated_ids = [
-        out[len(inp):]
-        for inp, out in zip(inputs.input_ids, output_ids)
-    ]
-    response = _processor.batch_decode(
-        generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False
-    )[0]
+def query_stream(
+    conversation_history: list[dict],
+    user_input: str,
+    current_image: "Image.Image | None",
+    positive_prompt: str,
+    negative_prompt: str,
+):
+    """
+    Qwen3-VL にストリーミングで問い合わせ、トークンを逐次 yield する。
+    """
+    if not is_loaded():
+        raise RuntimeError("モデルがロードされていません。先にモデルをロードしてください。")
 
-    # GPU メモリを明示的に解放
-    del inputs, output_ids, generated_ids
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    inputs = _build_inputs(
+        conversation_history, user_input, current_image, positive_prompt, negative_prompt
+    )
 
-    return response
+    streamer = TextIteratorStreamer(
+        _processor, skip_prompt=True, skip_special_tokens=True
+    )
+
+    def _generate():
+        with torch.inference_mode():
+            _model.generate(**inputs, max_new_tokens=2048, streamer=streamer)
+
+    thread = threading.Thread(target=_generate)
+    thread.start()
+
+    try:
+        for token in streamer:
+            yield token
+    finally:
+        thread.join()
+        del inputs
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()

@@ -29,13 +29,31 @@ def parse_prompt_update(text: str) -> tuple[str | None, str | None, str]:
 
     positive = None
     negative = None
+    current_field = None
+    current_lines: list[str] = []
+
+    def _flush():
+        nonlocal positive, negative
+        value = "\n".join(current_lines).strip() or None
+        if current_field == "positive":
+            positive = value
+        elif current_field == "negative":
+            negative = value
 
     for line in block.splitlines():
-        line = line.strip()
-        if line.lower().startswith("positive:"):
-            positive = line[len("positive:"):].strip()
-        elif line.lower().startswith("negative:"):
-            negative = line[len("negative:"):].strip()
+        stripped = line.strip()
+        if stripped.lower().startswith("positive:"):
+            _flush()
+            current_field = "positive"
+            current_lines = [stripped[len("positive:"):].strip()]
+        elif stripped.lower().startswith("negative:"):
+            _flush()
+            current_field = "negative"
+            current_lines = [stripped[len("negative:"):].strip()]
+        elif current_field is not None:
+            current_lines.append(stripped)
+
+    _flush()
 
     return positive, negative, display_text
 
