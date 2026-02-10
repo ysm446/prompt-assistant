@@ -1,4 +1,5 @@
 gradio>=4.0.0
+gradio_client
 requests
 Pillow
 transformers>=4.40.0

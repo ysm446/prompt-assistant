@@ -7,6 +7,7 @@ Qwen3-VL 推論クライアント（transformers ライブラリ経由）
 import torch
 from PIL import Image
 from transformers import AutoModelForImageTextToText, AutoProcessor
+from qwen_vl_utils import process_vision_info
 
 # 利用可能なモデルプリセット
 MODEL_PRESETS = {
@@ -104,12 +105,14 @@ def query(
         messages, tokenize=False, add_generation_prompt=True
     )
 
-    # 画像リストを抽出（processor に渡す用）
-    images = [current_image] if current_image is not None else None
+    # messages 全体から画像・動画を抽出（会話履歴中の画像も含む）
+    image_inputs, video_inputs = process_vision_info(messages)
 
     inputs = _processor(
         text=[text],
-        images=images,
+        images=image_inputs if image_inputs else None,
+        videos=video_inputs if video_inputs else None,
+        padding=True,
         return_tensors="pt",
     ).to(_model.device)
 

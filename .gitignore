@@ -63,5 +63,9 @@ desktop.ini
 # アプリケーションキャッシュ
 .last_model_cache.json
 
+# ユーザー設定（個人環境に依存するため除外）
+settings.json
+forge_api_info.txt
+
 # Windows特殊ファイル（誤作成防止）
 nul
