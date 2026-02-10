@@ -69,6 +69,12 @@ def _build_inputs(
         f"現在のプロンプト:\n"
         f"Positive: {positive_prompt}\n"
         f"Negative: {negative_prompt}\n\n"
+        "【修正する場合の方針】\n"
+        "プロンプトの構成をなるべく変更せず、単語だけ置き換えること。\n"
+        "【ネガティブプロンプトの方針】\n"
+        "- ネガティブプロンプトは原則として空のままにすること。\n"
+        "- ユーザーが「〜を除外したい」「〜を出したくない」と明示的に求めた場合のみ追加すること。\n"
+        "- 追加する場合も 10 タグ以内に抑えること。\n\n"
         "プロンプトを更新する場合は、返答の中に以下のフォーマットで含めてください:\n"
         "[PROMPT_UPDATE]\n"
         "Positive: <新しい positive プロンプト>\n"
@@ -130,7 +136,7 @@ def query_stream(
 
     def _generate():
         with torch.inference_mode():
-            _model.generate(**inputs, max_new_tokens=2048, streamer=streamer)
+            _model.generate(**inputs, max_new_tokens=512, streamer=streamer)
 
     thread = threading.Thread(target=_generate)
     thread.start()
