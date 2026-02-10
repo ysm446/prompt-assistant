@@ -116,7 +116,8 @@ def query(
         return_tensors="pt",
     ).to(_model.device)
 
-    output_ids = _model.generate(**inputs, max_new_tokens=512)
+    with torch.inference_mode():
+        output_ids = _model.generate(**inputs, max_new_tokens=512)
 
     # 入力トークンを除いた生成部分のみデコード
     generated_ids = [
@@ -126,5 +127,10 @@ def query(
     response = _processor.batch_decode(
         generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False
     )[0]
+
+    # GPU メモリを明示的に解放
+    del inputs, output_ids, generated_ids
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     return response

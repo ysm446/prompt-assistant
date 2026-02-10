@@ -11,8 +11,6 @@ import qwen_client
 import settings_manager
 from prompt_parser import parse_prompt_update, read_a1111_metadata
 
-# 解像度の選択肢
-SIZE_CHOICES = [512, 768, 832, 1024, 1216]
 DEFAULT_SAMPLER = "Euler a"
 
 
@@ -75,8 +73,8 @@ def on_image_drop(
         else gr.update()
     )
 
-    width_update = gr.update(value=meta["width"]) if "width" in meta and meta["width"] in SIZE_CHOICES else gr.update()
-    height_update = gr.update(value=meta["height"]) if "height" in meta and meta["height"] in SIZE_CHOICES else gr.update()
+    width_update = gr.update(value=meta["width"]) if "width" in meta else gr.update()
+    height_update = gr.update(value=meta["height"]) if "height" in meta else gr.update()
     seed_update = gr.update(value=meta["seed"]) if "seed" in meta else gr.update()
 
     msg = "メタデータを読み込み、プロンプト・パラメータを反映しました。"
@@ -98,19 +96,25 @@ def on_send(
     user_input: str,
     state: dict,
     chatbot: list,
+    model_label: str,
 ) -> tuple:
     """
     「送信」ボタン：Qwen3-VL に問い合わせて会話を進める。
+    モデル未ロードの場合は自動的にロードする。
     """
     if not user_input.strip():
-        return state, chatbot, gr.update(), gr.update(), ""
+        return state, chatbot, gr.update(), gr.update(), "", gr.update()
 
+    auto_load_status = None
     if not qwen_client.is_loaded():
-        chatbot = chatbot + [
-            {"role": "user", "content": user_input},
-            {"role": "assistant", "content": "モデルがロードされていません。先にモデルをロードしてください。"},
-        ]
-        return state, chatbot, gr.update(), gr.update(), ""
+        model_id = qwen_client.MODEL_PRESETS.get(model_label, model_label)
+        auto_load_status = qwen_client.load_model(model_id)
+        if not qwen_client.is_loaded():
+            chatbot = chatbot + [
+                {"role": "user", "content": user_input},
+                {"role": "assistant", "content": f"モデルのロードに失敗しました: {auto_load_status}"},
+            ]
+            return state, chatbot, gr.update(), gr.update(), "", gr.update(value=auto_load_status)
 
     try:
         response = qwen_client.query(
@@ -125,16 +129,13 @@ def on_send(
             {"role": "user", "content": user_input},
             {"role": "assistant", "content": f"エラーが発生しました: {e}"},
         ]
-        return state, chatbot, gr.update(), gr.update(), ""
+        return state, chatbot, gr.update(), gr.update(), "", gr.update()
 
     positive_new, negative_new, display_text = parse_prompt_update(response)
 
     # 会話履歴を更新（messages 形式）
-    user_content = []
-    if state.get("current_image") is not None:
-        user_content.append({"type": "image", "image": state["current_image"]})
-    user_content.append({"type": "text", "text": user_input})
-    state["conversation_history"].append({"role": "user", "content": user_content})
+    # 画像は履歴に含めず current_image として別管理する（VRAM/RAM の蓄積を防ぐ）
+    state["conversation_history"].append({"role": "user", "content": [{"type": "text", "text": user_input}]})
     state["conversation_history"].append({"role": "assistant", "content": response})
 
     # プロンプト更新があれば state に反映
@@ -152,7 +153,8 @@ def on_send(
         {"role": "assistant", "content": display_text},
     ]
 
-    return state, chatbot, positive_update, negative_update, ""
+    status_update = gr.update(value=auto_load_status) if auto_load_status else gr.update()
+    return state, chatbot, positive_update, negative_update, "", status_update
 
 
 def on_generate(
@@ -227,22 +229,6 @@ def build_ui():
 
         gr.Markdown("# Prompt Assistant")
 
-        # ---- モデル設定バー ----
-        with gr.Row():
-            model_dropdown = gr.Dropdown(
-                choices=list(qwen_client.MODEL_PRESETS.keys()),
-                value=saved_model if saved_model in qwen_client.MODEL_PRESETS else list(qwen_client.MODEL_PRESETS.keys())[0],
-                label="Qwen3-VL モデル",
-                scale=3,
-            )
-            load_btn = gr.Button("モデルをロード", scale=1)
-            model_status = gr.Textbox(
-                value="モデル未ロード",
-                label="モデルステータス",
-                interactive=False,
-                scale=3,
-            )
-
         # ---- 接続ステータス ----
         gr.Markdown(f"> **A1111 ステータス:** {a1111_msg}")
 
@@ -279,7 +265,9 @@ def build_ui():
                     placeholder="例: bad quality, worst quality, ...",
                 )
 
-                with gr.Accordion("生成パラメータ", open=True):
+                generate_btn = gr.Button("画像生成", variant="primary")
+
+                with gr.Accordion("生成パラメータ", open=False):
                     with gr.Row():
                         steps_slider = gr.Slider(
                             minimum=1, maximum=150, value=saved_steps, step=1, label="Steps"
@@ -292,20 +280,13 @@ def build_ui():
                         value=saved_sampler,
                         label="Sampler",
                     )
-                    with gr.Row():
-                        width_dropdown = gr.Dropdown(
-                            choices=SIZE_CHOICES,
-                            value=saved_width if saved_width in SIZE_CHOICES else 512,
-                            label="Width",
-                        )
-                        height_dropdown = gr.Dropdown(
-                            choices=SIZE_CHOICES,
-                            value=saved_height if saved_height in SIZE_CHOICES else 768,
-                            label="Height",
-                        )
+                    width_input = gr.Slider(
+                        minimum=64, maximum=2048, value=saved_width, step=8, label="Width"
+                    )
+                    height_input = gr.Slider(
+                        minimum=64, maximum=2048, value=saved_height, step=8, label="Height"
+                    )
                     seed_input = gr.Number(value=saved_seed, label="Seed（-1 でランダム）", precision=0)
-
-                generate_btn = gr.Button("画像生成", variant="primary")
 
             # 右: Qwen3-VL 会話エリア
             with gr.Column(scale=1):
@@ -322,13 +303,29 @@ def build_ui():
                     )
                     send_btn = gr.Button("送信", scale=1, variant="secondary")
 
+                # ---- モデル設定 ----
+                with gr.Row():
+                    model_dropdown = gr.Dropdown(
+                        choices=list(qwen_client.MODEL_PRESETS.keys()),
+                        value=saved_model if saved_model in qwen_client.MODEL_PRESETS else list(qwen_client.MODEL_PRESETS.keys())[0],
+                        label="Qwen3-VL モデル",
+                        scale=3,
+                    )
+                    load_btn = gr.Button("モデルをロード", scale=1)
+                with gr.Row():
+                    model_status = gr.Textbox(
+                        value="モデル未ロード",
+                        label="モデルステータス",
+                        interactive=False,
+                    )
+
         # ---- 設定自動保存 ----
 
         _save_inputs = [
             model_dropdown,
             positive_prompt, negative_prompt,
             steps_slider, cfg_slider, sampler_dropdown,
-            width_dropdown, height_dropdown, seed_input,
+            width_input, height_input, seed_input,
         ]
 
         def _save_settings(model, positive, negative, steps, cfg, sampler, width, height, seed):
@@ -362,21 +359,21 @@ def build_ui():
                 state,
                 positive_prompt, negative_prompt,
                 steps_slider, cfg_slider, sampler_dropdown,
-                width_dropdown, height_dropdown, seed_input,
+                width_input, height_input, seed_input,
                 image_status,
             ],
         )
 
         send_btn.click(
             fn=on_send,
-            inputs=[user_input, state, chatbot],
-            outputs=[state, chatbot, positive_prompt, negative_prompt, user_input],
+            inputs=[user_input, state, chatbot, model_dropdown],
+            outputs=[state, chatbot, positive_prompt, negative_prompt, user_input, model_status],
         )
 
         user_input.submit(
             fn=on_send,
-            inputs=[user_input, state, chatbot],
-            outputs=[state, chatbot, positive_prompt, negative_prompt, user_input],
+            inputs=[user_input, state, chatbot, model_dropdown],
+            outputs=[state, chatbot, positive_prompt, negative_prompt, user_input, model_status],
         )
 
         generate_btn.click(
@@ -385,7 +382,7 @@ def build_ui():
                 state,
                 positive_prompt, negative_prompt,
                 steps_slider, cfg_slider, sampler_dropdown,
-                width_dropdown, height_dropdown, seed_input,
+                width_input, height_input, seed_input,
             ],
             outputs=[state, image_display, image_status],
         )
