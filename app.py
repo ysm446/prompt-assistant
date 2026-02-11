@@ -302,7 +302,7 @@ def build_ui():
         "negative_prompt": saved_negative,
     }
 
-    with gr.Blocks(title="Prompt Assistant") as demo:
+    with gr.Blocks(title="Prompt Assistant", css=".fullscreen-button { display: none !important; }") as demo:
         state = gr.State(value=initial_state)
         sampler_choices = gr.State(value=sampler_list)
 
@@ -318,6 +318,7 @@ def build_ui():
                     type="pil",
                     interactive=True,
                     height=480,
+                    sources=["upload", "clipboard"],
                 )
                 image_status = gr.Textbox(
                     label="画像ロードステータス",
