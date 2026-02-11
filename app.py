@@ -207,6 +207,9 @@ def on_generate(
     seed: int,
     backend: str,
     comfyui_workflow: str,
+    comfyui_width: int,
+    comfyui_height: int,
+    comfyui_seed: int,
 ) -> tuple:
     """
     「画像生成」ボタン：選択中のバックエンドに生成リクエストを送る。
@@ -221,6 +224,9 @@ def on_generate(
                 workflow_path=workflow_path,
                 positive=positive,
                 negative=negative,
+                seed=int(comfyui_seed) if comfyui_seed is not None else -1,
+                width=int(comfyui_width) if comfyui_width else None,
+                height=int(comfyui_height) if comfyui_height else None,
             )
         else:
             image = a1111_client.generate_image(
@@ -259,9 +265,14 @@ def build_ui():
     saved_width = cfg_saved.get("width", 512)
     saved_height = cfg_saved.get("height", 768)
     saved_seed = cfg_saved.get("seed", -1)
-    saved_backend = cfg_saved.get("backend", "Forge 2")
+    saved_backend = cfg_saved.get("backend", "WebUI Forge")
+    if saved_backend == "Forge 2":  # 旧名称の移行
+        saved_backend = "WebUI Forge"
     saved_comfyui_workflow = cfg_saved.get("comfyui_workflow", "")
     saved_comfyui_url = cfg_saved.get("comfyui_url", "http://127.0.0.1:8188")
+    saved_comfyui_seed = cfg_saved.get("comfyui_seed", -1)
+    saved_comfyui_width = cfg_saved.get("comfyui_width", 1024)
+    saved_comfyui_height = cfg_saved.get("comfyui_height", 1024)
 
     # ComfyUI URL を comfyui_client に反映・接続確認
     comfyui_client.COMFYUI_URL = saved_comfyui_url
@@ -286,9 +297,6 @@ def build_ui():
         sampler_choices = gr.State(value=sampler_list)
 
         gr.Markdown("# Prompt Assistant")
-
-        # ---- 接続ステータス ----
-        gr.Markdown(f"> **Forge 2:** {a1111_msg}　|　**ComfyUI:** {comfyui_msg}")
 
         # ---- メインエリア（3カラム横並び）----
         with gr.Row(equal_height=False):
@@ -328,10 +336,15 @@ def build_ui():
                 with gr.Accordion("生成パラメータ", open=False):
                     with gr.Row():
                         backend_radio = gr.Radio(
-                            choices=["Forge 2", "ComfyUI"],
+                            choices=["WebUI Forge", "ComfyUI"],
                             value=saved_backend,
                             label="バックエンド",
                         )
+                    _initial_conn_msg = (
+                        f"ComfyUI: {comfyui_msg}" if saved_backend == "ComfyUI"
+                        else f"WebUI Forge: {a1111_msg}"
+                    )
+                    connection_status = gr.Markdown(_initial_conn_msg)
                     comfyui_workflow_dropdown = gr.Dropdown(
                         choices=workflow_list,
                         value=saved_comfyui_workflow if saved_comfyui_workflow in workflow_list else (workflow_list[0] if workflow_list else None),
@@ -364,6 +377,19 @@ def build_ui():
                     seed_input = gr.Number(
                         value=saved_seed, label="Seed（-1 でランダム）", precision=0,
                         visible=(saved_backend != "ComfyUI"),
+                    )
+                    with gr.Row():
+                        comfyui_width_input = gr.Slider(
+                            minimum=64, maximum=2048, value=saved_comfyui_width, step=8, label="Width",
+                            visible=(saved_backend == "ComfyUI"),
+                        )
+                        comfyui_height_input = gr.Slider(
+                            minimum=64, maximum=2048, value=saved_comfyui_height, step=8, label="Height",
+                            visible=(saved_backend == "ComfyUI"),
+                        )
+                    comfyui_seed_input = gr.Number(
+                        value=saved_comfyui_seed, label="Seed（-1 でランダム）", precision=0,
+                        visible=(saved_backend == "ComfyUI"),
                     )
 
             # 右: Qwen3-VL 会話エリア
@@ -405,9 +431,10 @@ def build_ui():
             steps_slider, cfg_slider, sampler_dropdown,
             width_input, height_input, seed_input,
             backend_radio, comfyui_workflow_dropdown,
+            comfyui_width_input, comfyui_height_input, comfyui_seed_input,
         ]
 
-        def _save_settings(model, positive, negative, steps, cfg, sampler, width, height, seed, backend, comfyui_workflow):
+        def _save_settings(model, positive, negative, steps, cfg, sampler, width, height, seed, backend, comfyui_workflow, comfyui_width, comfyui_height, comfyui_seed):
             settings_manager.save({
                 "model": model,
                 "positive_prompt": positive,
@@ -420,19 +447,27 @@ def build_ui():
                 "seed": int(seed) if seed is not None else -1,
                 "backend": backend,
                 "comfyui_workflow": comfyui_workflow or "",
+                "comfyui_width": int(comfyui_width) if comfyui_width else 1024,
+                "comfyui_height": int(comfyui_height) if comfyui_height else 1024,
+                "comfyui_seed": int(comfyui_seed) if comfyui_seed is not None else -1,
             })
 
         def _on_backend_change(backend):
             """バックエンド切り替え時に各コンポーネントの表示を切り替える。"""
             is_comfy = backend == "ComfyUI"
+            conn_msg = f"ComfyUI: {comfyui_msg}" if is_comfy else f"WebUI Forge: {a1111_msg}"
             return (
-                gr.update(visible=is_comfy),   # comfyui_workflow_dropdown
-                gr.update(visible=not is_comfy),  # steps_slider
-                gr.update(visible=not is_comfy),  # cfg_slider
-                gr.update(visible=not is_comfy),  # sampler_dropdown
-                gr.update(visible=not is_comfy),  # width_input
-                gr.update(visible=not is_comfy),  # height_input
-                gr.update(visible=not is_comfy),  # seed_input
+                gr.update(visible=is_comfy),        # comfyui_workflow_dropdown
+                gr.update(visible=not is_comfy),    # steps_slider
+                gr.update(visible=not is_comfy),    # cfg_slider
+                gr.update(visible=not is_comfy),    # sampler_dropdown
+                gr.update(visible=not is_comfy),    # width_input
+                gr.update(visible=not is_comfy),    # height_input
+                gr.update(visible=not is_comfy),    # seed_input
+                gr.update(visible=is_comfy),        # comfyui_width_input
+                gr.update(visible=is_comfy),        # comfyui_height_input
+                gr.update(visible=is_comfy),        # comfyui_seed_input
+                gr.update(value=conn_msg),          # connection_status
             )
 
         for _comp in _save_inputs:
@@ -445,6 +480,8 @@ def build_ui():
                 comfyui_workflow_dropdown,
                 steps_slider, cfg_slider, sampler_dropdown,
                 width_input, height_input, seed_input,
+                comfyui_width_input, comfyui_height_input, comfyui_seed_input,
+                connection_status,
             ],
         )
 
@@ -494,6 +531,7 @@ def build_ui():
                 steps_slider, cfg_slider, sampler_dropdown,
                 width_input, height_input, seed_input,
                 backend_radio, comfyui_workflow_dropdown,
+                comfyui_width_input, comfyui_height_input, comfyui_seed_input,
             ],
             outputs=[state, image_display, image_status],
         )
@@ -503,4 +541,5 @@ def build_ui():
 
 if __name__ == "__main__":
     app = build_ui()
+    app.queue()
     app.launch(inbrowser=True)

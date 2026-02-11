@@ -8,6 +8,7 @@ Forge 2 は /sdapi/v1/txt2img REST API を廃止し Gradio API のみ提供。
 
 import os
 
+import requests
 from PIL import Image
 from gradio_client import Client
 
@@ -27,6 +28,14 @@ _client: Client | None = None
 def _get_client() -> Client:
     global _client
     if _client is None:
+        # gradio_client.Client() はサーバー未起動だと無限待機になるため、
+        # 先に短いタイムアウトで HTTP 疎通確認を行う
+        try:
+            requests.get(FORGE_URL, timeout=5)
+        except Exception as e:
+            raise RuntimeError(
+                f"WebUI Forge に接続できません（{FORGE_URL}）。起動しているか確認してください。({e})"
+            )
         _client = Client(FORGE_URL, verbose=False)
     return _client
 

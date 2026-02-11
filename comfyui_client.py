@@ -8,6 +8,7 @@ ComfyUI API クライアント（REST + WebSocket）
 
 import json
 import os
+import random
 import uuid
 from io import BytesIO
 
@@ -94,27 +95,63 @@ def reload_workflows():
     WORKFLOW_PRESETS = _scan_workflows()
 
 
-def _patch_workflow(workflow: dict, positive: str, negative: str) -> dict:
+_LATENT_IMAGE_NODES = (
+    "EmptyLatentImage",
+    "EmptySD3LatentImage",
+    "EmptyLatentImageSD3",
+    "EmptyHunyuanLatentVideo",
+)
+
+
+def _patch_workflow(
+    workflow: dict,
+    positive: str,
+    negative: str,
+    seed: int = -1,
+    width: int | None = None,
+    height: int | None = None,
+) -> dict:
     """
-    ワークフロー JSON のプロンプトテキストだけを差し替える。
-    steps / cfg / sampler / size はワークフロー側の値をそのまま使う。
+    ワークフロー JSON のプロンプト・seed・サイズを差し替える。
 
     CLIPTextEncode:
-      - メタタイトルに "negative"/"ネガティブ"/"neg" が含まれる → negative
+      - タイトルに "negative"/"ネガティブ"/"neg" → negative
       - それ以外 → positive
+    KSampler / KSamplerAdvanced:
+      - seed != -1 なら上書き（-1 はワークフロー側の値をそのまま使う）
+    EmptyLatentImage 系:
+      - width / height が None でなければ上書き
     """
     import copy
     patched = copy.deepcopy(workflow)
 
+    actual_seed = random.randint(0, 2**32 - 1) if seed == -1 else seed
+
     _neg_keywords = ("negative", "ネガティブ", "neg")
     for node in patched.values():
-        if not isinstance(node, dict) or node.get("class_type") != "CLIPTextEncode":
+        if not isinstance(node, dict):
             continue
-        title = (node.get("_meta", {}).get("title", "") or "").lower()
-        if any(kw in title for kw in _neg_keywords):
-            node["inputs"]["text"] = negative
-        else:
-            node["inputs"]["text"] = positive
+        class_type = node.get("class_type", "")
+        inputs = node.get("inputs", {})
+
+        if class_type == "CLIPTextEncode":
+            title = (node.get("_meta", {}).get("title", "") or "").lower()
+            if any(kw in title for kw in _neg_keywords):
+                inputs["text"] = negative
+            else:
+                inputs["text"] = positive
+
+        elif class_type in ("KSampler", "KSamplerAdvanced"):
+            if "seed" in inputs:
+                inputs["seed"] = actual_seed
+            if "noise_seed" in inputs:
+                inputs["noise_seed"] = actual_seed
+
+        elif class_type in _LATENT_IMAGE_NODES:
+            if width is not None:
+                inputs["width"] = width
+            if height is not None:
+                inputs["height"] = height
 
     return patched
 
@@ -123,10 +160,13 @@ def generate_image(
     workflow_path: str,
     positive: str,
     negative: str,
+    seed: int = -1,
+    width: int | None = None,
+    height: int | None = None,
 ) -> Image.Image:
     """
-    ワークフロー JSON のプロンプトだけを差し替えて ComfyUI で生成し、PIL.Image を返す。
-    steps / cfg / sampler / size はワークフロー側の設定を使用する。
+    ワークフロー JSON のプロンプト・seed・サイズを差し替えて ComfyUI で生成し、PIL.Image を返す。
+    seed=-1 はランダム、width/height=None はワークフロー側の値をそのまま使う。
     """
     if not workflow_path or not os.path.isfile(workflow_path):
         raise FileNotFoundError(f"ワークフローファイルが見つかりません: {workflow_path}")
@@ -134,7 +174,7 @@ def generate_image(
     with open(workflow_path, encoding="utf-8") as f:
         workflow = json.load(f)
 
-    patched = _patch_workflow(workflow, positive, negative)
+    patched = _patch_workflow(workflow, positive, negative, seed=seed, width=width, height=height)
 
     client_id = str(uuid.uuid4())
     base_url = _get_url()
