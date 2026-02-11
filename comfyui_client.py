@@ -131,6 +131,14 @@ def upload_image(pil_image: Image.Image, filename: str = "video_input.png") -> s
     return resp.json()["name"]
 
 
+def interrupt() -> None:
+    """ComfyUI の現在の生成を中断する（/interrupt エンドポイント）。失敗しても例外を出さない。"""
+    try:
+        requests.post(f"{_get_url()}/interrupt", timeout=5)
+    except Exception:
+        pass
+
+
 def free_vram() -> str:
     """ComfyUI のモデルをアンロードして VRAM を解放する。"""
     try:

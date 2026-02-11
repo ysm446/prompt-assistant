@@ -1,8 +1,8 @@
 # Prompt Assistant
 
-Stable Diffusion × Qwen3-VL を組み合わせた画像生成プロンプトアシスタント。
+Stable Diffusion × Qwen3-VL を組み合わせた画像・動画生成プロンプトアシスタント。
 
-Qwen3-VL との会話を通じてプロンプトを磨き、SD WebUI Forge または ComfyUI で画像を生成する Gradio アプリです。
+Qwen3-VL との会話を通じてプロンプトを磨き、SD WebUI Forge または ComfyUI で画像・動画を生成する Gradio アプリです。
 
 ## 機能
 
@@ -11,6 +11,8 @@ Qwen3-VL との会話を通じてプロンプトを磨き、SD WebUI Forge ま�
 - **画像生成**: WebUI Forge（Gradio API）または ComfyUI（REST API）で txt2img 生成
 - **連続生成**: 生成枚数を指定して連続生成。seed が指定値の場合は +1 ずつインクリメント
 - **画像ドロップ**: A1111 / ComfyUI 生成 PNG をドロップするとメタデータを自動パース・反映
+- **動画生成**: ComfyUI + WAN 2.2 ワークフローで画像から動画を生成
+- **動画プロンプト生成**: Qwen3-VL が Scene / Action / Camera / Style / Final Prompt の各セクションを自動生成（セクションをチェックボックスで選択可）
 - **VRAM解放**: LLM・WebUI Forge・ComfyUI のモデルをアプリから個別にアンロード
 - **設定の自動保存**: プロンプト・パラメータ・モデル選択を `settings.json` に保存
 
@@ -61,12 +63,25 @@ python app.py
 
 ## 使い方
 
-1. **モデルをロード**: 上部のドロップダウンでモデルを選択し「モデルをロード」をクリック
+### 画像生成
+
+1. **モデルをロード**: モデル設定アコーディオンでモデルを選択し「モデルをロード」をクリック
 2. **プロンプトを入力**: Positive / Negative Prompt を手入力、または画像をドロップして自動読み込み
 3. **Qwen3-VL と会話**: 右カラムの入力欄にメッセージを入力して「送信」
    - プロンプト更新を提案された場合は自動でプロンプトエリアに反映されます
 4. **画像を生成**: 「画像生成」ボタンをクリック（枚数指定・停止ボタンあり）
-5. **バックエンド切り替え**: 「生成パラメータ」アコーディオンからバックエンドを選択
+5. **バックエンド切り替え**: 「画像生成パラメータ」アコーディオンからバックエンドを選択
+
+### 動画生成
+
+1. **画像生成タブで画像を用意**: 生成または画像をドロップして current_image にセット
+2. **動画生成タブに切り替え**
+3. **（任意）動画プロンプトを生成**:
+   - 生成するセクション（Scene / Action / Camera / Style / Final Prompt）をチェックで選択
+   - 追加指示を入力（任意）
+   - 「動画プロンプト生成」ボタンをクリック → Qwen3-VL が各セクションを生成
+4. **動画生成パラメータを設定**: ワークフロー・Width・Height・Seed をアコーディオンで設定
+5. **「動画生成」ボタンをクリック**: ComfyUI にジョブを送信、経過時間をステータスに表示
 
 ### プロンプト自動更新
 
@@ -87,15 +102,20 @@ Negative: bad quality, worst quality, blurry, ...
 
 ### VRAM 解放
 
-「VRAM」アコーディオンに3つのボタンがあります:
+動画生成タブの「VRAM」アコーディオンに3つのボタンがあります:
 - **LLM 解放**: Qwen3-VL モデルをアンロード（再ロードは「モデルをロード」ボタン）
 - **WebUI Forge 解放**: Forge のチェックポイントをアンロード
 - **ComfyUI 解放**: ComfyUI のモデルキャッシュを解放（`/free` エンドポイント）
 
 ### ComfyUI ワークフロー
 
-`workflows/` フォルダに ComfyUI の API 形式 JSON を配置すると、ドロップダウンに自動で表示されます。
+- **画像ワークフロー**: `workflows/image/` に配置 → 画像生成パラメータのドロップダウンに表示
+- **動画ワークフロー**: `workflows/video/` に配置 → 動画生成パラメータのドロップダウンに表示
+
 ワークフロー内の `CLIPTextEncode` ノードのタイトルに `negative` / `ネガティブ` / `neg` が含まれるとネガティブプロンプトとして扱われます。
+
+サイズ（Width / Height）は以下のノードに自動で書き込まれます:
+`EmptyLatentImage`・`EmptySD3LatentImage`・`WanImageToVideo`・`WanVideoToVideo`・`EmptyWanLatentVideo` 他
 
 ## LLM モデルプリセット
 
@@ -121,6 +141,8 @@ prompt-assistant/
 ├── discover_forge_api.py   # Forge API 調査ツール（開発用）
 ├── requirements.txt
 ├── start.bat
-├── workflows/              # ComfyUI ワークフロー JSON
+├── workflows/
+│   ├── image/              # 画像生成用 ComfyUI ワークフロー JSON
+│   └── video/              # 動画生成用 ComfyUI ワークフロー JSON（WAN 2.2 等）
 └── models/                 # モデルキャッシュ（HF_HOME）
 ```

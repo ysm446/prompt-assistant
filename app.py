@@ -3,6 +3,9 @@ app.py
 SD × Qwen3-VL 画像生成アシスタント - Gradio アプリ本体
 """
 
+import threading
+import time
+
 import gradio as gr
 from PIL import Image
 
@@ -305,10 +308,27 @@ def on_generate_video_prompt(state: dict, positive: str, extra_instruction: str,
         yield f"動画プロンプト生成エラー: {e}"
 
 
+# 動画生成の世代カウンタ：新しい生成または停止のたびにインクリメントし、
+# 古いスレッドの結果が後から表示されるのを防ぐ。
+_video_gen_id = 0
+
+
+def on_stop_video():
+    """停止ボタン：ComfyUI の生成を中断し、世代カウンタをインクリメントして結果を破棄する。"""
+    global _video_gen_id
+    _video_gen_id += 1
+    comfyui_client.interrupt()
+    return "動画生成をキャンセルしました"
+
+
 def on_generate_video(state: dict, video_prompt_text: str, workflow_name: str, seed, width, height):
     """
     「動画生成」ボタン：ComfyUI に画像 + 動画プロンプトを送って動画を生成する。
     """
+    global _video_gen_id
+    _video_gen_id += 1
+    my_id = _video_gen_id
+
     image = state.get("current_image")
     if image is None:
         yield state, gr.update(), "画像がありません。上の画像エリアに画像をセットしてください。"
@@ -317,25 +337,54 @@ def on_generate_video(state: dict, video_prompt_text: str, workflow_name: str, s
     actual_width  = int(width)  if width  else None
     actual_height = int(height) if height else None
 
-    yield state, gr.update(), "動画生成中..."
-    try:
-        workflow_path = comfyui_client.VIDEO_WORKFLOW_PRESETS.get(workflow_name, workflow_name)
-        result = comfyui_client.generate_image(
-            workflow_path=workflow_path,
-            positive=video_prompt_text,
-            negative="",
-            seed=actual_seed,
-            width=actual_width,
-            height=actual_height,
-            input_image=image,
-        )
+    result_box: list = []
+    error_box: list = []
+
+    def _run():
+        # 実行開始前にすでに新しい世代が始まっていたら即終了
+        if my_id != _video_gen_id:
+            return
+        try:
+            workflow_path = comfyui_client.VIDEO_WORKFLOW_PRESETS.get(workflow_name, workflow_name)
+            result_box.append(comfyui_client.generate_image(
+                workflow_path=workflow_path,
+                positive=video_prompt_text,
+                negative="",
+                seed=actual_seed,
+                width=actual_width,
+                height=actual_height,
+                input_image=image,
+            ))
+        except Exception as e:
+            error_box.append(e)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    start = time.time()
+
+    while t.is_alive():
+        # Gradio がこのジェネレータをキャンセルした場合、次の yield で停止する
+        if my_id != _video_gen_id:
+            return
+        elapsed = time.time() - start
+        yield state, gr.update(), f"動画生成中... {elapsed:.0f}秒"
+        time.sleep(1)
+
+    # スレッド完了後、すでに新しい世代が始まっていたら結果を捨てる
+    if my_id != _video_gen_id:
+        return
+
+    elapsed = time.time() - start
+    if error_box:
+        yield state, gr.update(), f"動画生成エラー: {error_box[0]}"
+    elif result_box:
+        result = result_box[0]
         if isinstance(result, str):
-            yield state, gr.update(value=result), "動画生成完了"
+            yield state, gr.update(value=result), f"動画生成完了（{elapsed:.0f}秒）"
         else:
-            # 動画ワークフローが画像を返した場合
-            yield state, gr.update(), "完了（動画ではなく画像として出力されました）"
-    except Exception as e:
-        yield state, gr.update(), f"動画生成エラー: {e}"
+            yield state, gr.update(), f"完了（動画ではなく画像として出力されました）（{elapsed:.0f}秒）"
+    else:
+        yield state, gr.update(), f"動画生成エラー: 結果が取得できませんでした"
 
 
 # ---------------------------------------------------------------------------
@@ -750,7 +799,12 @@ def build_ui():
             outputs=[state, video_display, video_status],
         )
 
-        video_stop_btn.click(fn=None, cancels=[gen_video_prompt_event, gen_video_event])
+        video_stop_btn.click(
+            fn=on_stop_video,
+            inputs=[],
+            outputs=[video_status],
+            cancels=[gen_video_prompt_event, gen_video_event],
+        )
 
     return demo
 

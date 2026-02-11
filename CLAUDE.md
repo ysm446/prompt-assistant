@@ -2,8 +2,9 @@
 
 ## プロジェクト概要
 
-SD WebUI Forge × Qwen3-VL を組み合わせた画像生成プロンプトアシスタント。
+SD WebUI Forge × Qwen3-VL を組み合わせた画像・動画生成プロンプトアシスタント。
 Qwen3-VL との会話でプロンプトを磨き、WebUI Forge または ComfyUI で画像を生成する Gradio アプリ。
+動画生成は ComfyUI + WAN 2.2 ワークフローに対応。
 
 ## 環境・実行方法
 
@@ -44,16 +45,22 @@ python app.py
 ### ComfyUI API
 - REST API ベース（WebSocket は使用しない）。
 - 生成完了は `/history/{prompt_id}` をポーリング（0.5 秒間隔、最大 300 秒）で検出。
-- ワークフロー JSON は `_patch_workflow()` で CLIPTextEncode・KSampler・EmptyLatentImage 系ノードを差し替え。
+- ワークフロー JSON は `_patch_workflow()` で CLIPTextEncode・KSampler・EmptyLatentImage 系・WAN 動画系ノードを差し替え。
 - ネガティブ判定: `CLIPTextEncode` ノードのタイトルに `negative` / `ネガティブ` / `neg` が含まれるか。
 - seed=-1 の場合は `random.randint(0, 2**32 - 1)` でランダム値を生成してから書き込む。
 - VRAM解放: `POST /free` に `{"unload_models": true, "free_memory": true}` を送信。
+- サイズ差し替え対象ノード（`_LATENT_IMAGE_NODES`）: `EmptyLatentImage`・`EmptySD3LatentImage`・`EmptyLatentImageSD3`・`EmptyHunyuanLatentVideo`・`WanImageToVideo`・`WanVideoToVideo`・`EmptyWanLatentVideo`。
+- 動画ワークフローは `workflows/video/` に配置（`VIDEO_WORKFLOW_PRESETS` として自動スキャン）。
+- 動画生成は `threading.Thread` でバックグラウンド実行し、メインループで経過時間をポーリング。
 
 ### Qwen3-VL
 - `process_vision_info(messages)` を使って画像を抽出すること（直接 PIL を渡すと不一致エラー）。
 - `AutoModelForImageTextToText` を使用（`AutoModelForCausalLM` ではない）。
 - `dtype` 引数を使うこと（`torch_dtype` は deprecated）。
 - モデルアンロード: `_model = _processor = _loaded_model_id = None` + `torch.cuda.empty_cache()`。
+- 動画プロンプト生成: `generate_video_prompt_stream(image, positive_prompt, extra_instruction, sections)` でストリーミング生成。
+  - `sections` に生成するセクション（`scene`・`action`・`camera`・`style`・`prompt`）のリストを渡す。
+  - `_SECTION_TEMPLATES` に各セクションのテンプレート文字列を定義。`_ALL_SECTIONS` は全セクション順序を保持。
 
 ### Gradio 6.5.1
 - `gr.Chatbot` はデフォルトで messages 形式を使用。
@@ -64,6 +71,12 @@ python app.py
 - ジェネレーター関数（`yield`）を使う場合は `app.queue()` が必須。
 - 連続生成の停止: `gen_event = btn.click(...)` + `stop_btn.click(fn=None, cancels=[gen_event])`。
 
+### UI レイアウト
+- トップレベルは `gr.Tabs()` で「画像生成」「動画生成」タブに分割。
+- **画像生成タブ**: 左（画像表示）・中（プロンプト・パラメータ）・右（Qwen3-VL チャット）の3列。
+- **動画生成タブ**: 左（生成動画・ステータス）・中（動画プロンプト・生成/停止ボタン・VRAM）・右（動画生成パラメータ・追加指示・セクション選択・プロンプト生成）の3列。
+- VRAM アコーディオンは動画タブの中列（生成/停止ボタン下）に配置。
+
 ## 設定ファイル
 
 `settings.json`（gitignore 済み）に以下を保存：
@@ -72,6 +85,9 @@ python app.py
 - `backend` (`"WebUI Forge"` or `"ComfyUI"`)
 - `comfyui_workflow`, `comfyui_url`, `comfyui_seed`, `comfyui_width`, `comfyui_height`
 - `generate_count`
+- `video_sections`（リスト: `scene` / `action` / `camera` / `style` / `prompt`）
+- `video_width`, `video_height`（動画サイズ、スライダー 240–1920 step16）
+- `video_seed`（-1 でランダム）
 
 各 UI コンポーネントの `.change` イベントで自動保存。
 
