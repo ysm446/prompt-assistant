@@ -365,6 +365,7 @@ def build_ui():
     saved_comfyui_width = cfg_saved.get("comfyui_width", 1024)
     saved_comfyui_height = cfg_saved.get("comfyui_height", 1024)
     saved_generate_count = cfg_saved.get("generate_count", 1)
+    saved_video_sections = cfg_saved.get("video_sections", ["scene", "action", "camera", "style", "prompt"])
 
     # ComfyUI URL を comfyui_client に反映・接続確認
     comfyui_client.COMFYUI_URL = saved_comfyui_url
@@ -391,13 +392,11 @@ def build_ui():
 
         gr.Markdown("# Prompt Assistant")
 
-        # ---- メインエリア（左+中エリア ＋ 右チャットエリア）----
-        with gr.Row(equal_height=False):
+        # ---- メインエリア（タブ切り替え）----
+        with gr.Tabs():
 
-            # 左+中エリア（上段: 画像生成 ／ 下段: 動画生成）
-            with gr.Column(scale=2):
-
-                # 上段: 画像エリア
+            # タブ1: 画像生成
+            with gr.Tab("画像生成"):
                 with gr.Row(equal_height=False):
 
                     # 左: 画像表示エリア（ドロップ対応）
@@ -441,16 +440,7 @@ def build_ui():
                             minimum=1,
                         )
 
-                        with gr.Accordion("VRAM", open=False):
-                            free_vram_status = gr.Textbox(
-                                label="VRAM解放ステータス", interactive=False, lines=2,
-                            )
-                            with gr.Row():
-                                free_qwen_btn  = gr.Button("LLM 解放",          variant="secondary", scale=1)
-                                free_forge_btn = gr.Button("WebUI Forge 解放", variant="secondary", scale=1)
-                                free_comfy_btn = gr.Button("ComfyUI 解放",     variant="secondary", scale=1)
-
-                        with gr.Accordion("生成パラメータ", open=False):
+                        with gr.Accordion("画像生成パラメータ", open=False):
                             with gr.Row():
                                 backend_radio = gr.Radio(
                                     choices=["WebUI Forge", "ComfyUI"],
@@ -509,18 +499,75 @@ def build_ui():
                                 visible=(saved_backend == "ComfyUI"),
                             )
 
-                # 下段: 動画エリア
-                gr.HTML("<hr style='margin: 16px 0;'>")
+                    # 右: Qwen3-VL 会話エリア
+                    with gr.Column(scale=1):
+                        chatbot = gr.Chatbot(
+                            label="会話 (Qwen3-VL)",
+                            height=480,
+                        )
+                        user_input = gr.Textbox(
+                            placeholder="Qwen3-VL へのメッセージを入力...",
+                            label="",
+                            lines=1,
+                        )
+                        with gr.Row():
+                            send_btn = gr.Button("送信", scale=1, variant="secondary")
+                            clear_btn = gr.Button("クリア", scale=1, variant="stop")
+
+                        # ---- モデル設定 ----
+                        with gr.Accordion("モデル設定", open=False):
+                            with gr.Row():
+                                model_dropdown = gr.Dropdown(
+                                    choices=list(qwen_client.MODEL_PRESETS.keys()),
+                                    value=saved_model if saved_model in qwen_client.MODEL_PRESETS else list(qwen_client.MODEL_PRESETS.keys())[0],
+                                    label="Qwen3-VL モデル",
+                                    scale=3,
+                                )
+                                load_btn = gr.Button("モデルをロード", scale=1)
+                            model_status = gr.Textbox(
+                                value="モデル未ロード",
+                                label="モデルステータス",
+                                interactive=False,
+                            )
+
+            # タブ2: 動画生成
+            with gr.Tab("動画生成"):
                 with gr.Row(equal_height=False):
 
-                    # 左: 動画表示エリア
+                    # 列1: 生成動画 + ステータス
                     with gr.Column(scale=1):
                         video_display = gr.Video(
                             label="生成動画",
                             height=480,
                         )
+                        video_status = gr.Textbox(
+                            label="動画生成ステータス",
+                            interactive=False,
+                            max_lines=2,
+                        )
 
-                    # 中: 動画生成コントロール
+                    # 列2: 動画プロンプト + 生成/停止ボタン + VRAM
+                    with gr.Column(scale=1):
+                        video_prompt = gr.Textbox(
+                            label="動画プロンプト",
+                            lines=10,
+                            interactive=True,
+                            placeholder="「動画プロンプト生成」ボタンで自動生成、または直接入力",
+                        )
+                        with gr.Row():
+                            generate_video_btn = gr.Button("動画生成", variant="primary", scale=3)
+                            video_stop_btn = gr.Button("停止", variant="stop", scale=1)
+
+                        with gr.Accordion("VRAM", open=False):
+                            free_vram_status = gr.Textbox(
+                                label="VRAM解放ステータス", interactive=False, lines=2,
+                            )
+                            with gr.Row():
+                                free_qwen_btn  = gr.Button("LLM 解放",          variant="secondary", scale=1)
+                                free_forge_btn = gr.Button("WebUI Forge 解放", variant="secondary", scale=1)
+                                free_comfy_btn = gr.Button("ComfyUI 解放",     variant="secondary", scale=1)
+
+                    # 列3: 動画ワークフロー + 追加指示 + セクション選択 + プロンプト生成
                     with gr.Column(scale=1):
                         video_workflow_dropdown = gr.Dropdown(
                             choices=video_workflow_list,
@@ -534,55 +581,10 @@ def build_ui():
                         )
                         video_section_checkboxes = gr.CheckboxGroup(
                             choices=["scene", "action", "camera", "style", "prompt"],
-                            value=["scene", "action", "camera", "style", "prompt"],
+                            value=saved_video_sections,
                             label="生成するセクション",
                         )
                         generate_video_prompt_btn = gr.Button("動画プロンプト生成", variant="secondary")
-                        video_prompt = gr.Textbox(
-                            label="動画プロンプト",
-                            lines=6,
-                            interactive=True,
-                            placeholder="「動画プロンプト生成」ボタンで自動生成、または直接入力",
-                        )
-                        with gr.Row():
-                            generate_video_btn = gr.Button("動画生成", variant="primary", scale=3)
-                            video_stop_btn = gr.Button("停止", variant="stop", scale=1)
-                        video_status = gr.Textbox(
-                            label="動画生成ステータス",
-                            interactive=False,
-                            max_lines=2,
-                        )
-
-            # 右: Qwen3-VL 会話エリア
-            with gr.Column(scale=1):
-                chatbot = gr.Chatbot(
-                    label="会話 (Qwen3-VL)",
-                    height=480,
-                )
-                user_input = gr.Textbox(
-                    placeholder="Qwen3-VL へのメッセージを入力...",
-                    label="",
-                    lines=1,
-                )
-                with gr.Row():
-                    send_btn = gr.Button("送信", scale=1, variant="secondary")
-                    clear_btn = gr.Button("クリア", scale=1, variant="stop")
-
-                # ---- モデル設定 ----
-                with gr.Accordion("モデル設定", open=False):
-                    with gr.Row():
-                        model_dropdown = gr.Dropdown(
-                            choices=list(qwen_client.MODEL_PRESETS.keys()),
-                            value=saved_model if saved_model in qwen_client.MODEL_PRESETS else list(qwen_client.MODEL_PRESETS.keys())[0],
-                            label="Qwen3-VL モデル",
-                            scale=3,
-                        )
-                        load_btn = gr.Button("モデルをロード", scale=1)
-                    model_status = gr.Textbox(
-                        value="モデル未ロード",
-                        label="モデルステータス",
-                        interactive=False,
-                    )
 
         # ---- 設定自動保存 ----
 
@@ -594,9 +596,10 @@ def build_ui():
             backend_radio, comfyui_workflow_dropdown,
             comfyui_width_input, comfyui_height_input, comfyui_seed_input,
             count_input,
+            video_section_checkboxes,
         ]
 
-        def _save_settings(model, positive, negative, steps, cfg, sampler, width, height, seed, backend, comfyui_workflow, comfyui_width, comfyui_height, comfyui_seed, generate_count):
+        def _save_settings(model, positive, negative, steps, cfg, sampler, width, height, seed, backend, comfyui_workflow, comfyui_width, comfyui_height, comfyui_seed, generate_count, video_sections):
             settings_manager.save({
                 "model": model,
                 "positive_prompt": positive,
@@ -613,6 +616,7 @@ def build_ui():
                 "comfyui_height": int(comfyui_height) if comfyui_height else 1024,
                 "comfyui_seed": int(comfyui_seed) if comfyui_seed is not None else -1,
                 "generate_count": int(generate_count) if generate_count is not None else 1,
+                "video_sections": video_sections or [],
             })
 
         def _on_backend_change(backend):
