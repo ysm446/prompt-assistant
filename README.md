@@ -2,14 +2,16 @@
 
 Stable Diffusion × Qwen3-VL を組み合わせた画像生成プロンプトアシスタント。
 
-Qwen3-VL との会話を通じてプロンプトを磨き、SD WebUI Forge 2 で画像を生成する Gradio アプリです。
+Qwen3-VL との会話を通じてプロンプトを磨き、SD WebUI Forge または ComfyUI で画像を生成する Gradio アプリです。
 
 ## 機能
 
 - **プロンプト提案**: 画像や意図を伝えると Qwen3-VL が Stable Diffusion 向けのプロンプトを提案
 - **プロンプト自動反映**: `[PROMPT_UPDATE]` タグを使って会話からプロンプトエリアを自動更新
-- **画像生成**: Forge 2 の Gradio API 経由で txt2img 生成
-- **画像ドロップ**: 既存の PNG をドロップすると A1111 メタデータを自動パース・反映
+- **画像生成**: WebUI Forge（Gradio API）または ComfyUI（REST API）で txt2img 生成
+- **連続生成**: 生成枚数を指定して連続生成。seed が指定値の場合は +1 ずつインクリメント
+- **画像ドロップ**: A1111 / ComfyUI 生成 PNG をドロップするとメタデータを自動パース・反映
+- **VRAM解放**: LLM・WebUI Forge・ComfyUI のモデルをアプリから個別にアンロード
 - **設定の自動保存**: プロンプト・パラメータ・モデル選択を `settings.json` に保存
 
 ## 必要環境
@@ -18,16 +20,21 @@ Qwen3-VL との会話を通じてプロンプトを磨き、SD WebUI Forge 2 で
 |---|---|
 | Python | 3.10 以上 |
 | GPU | CUDA 対応 GPU（Qwen3-VL-4B で VRAM ~6GB） |
-| SD WebUI | [Stable Diffusion WebUI Forge 2](https://github.com/lllyasviel/stable-diffusion-webui-forge) |
+| 画像生成バックエンド | [SD WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) または [ComfyUI](https://github.com/comfyanonymous/ComfyUI) |
 
 ## セットアップ
 
-### 1. Forge 2 の準備
+### 1. 画像生成バックエンドの準備
 
-Forge 2 を起動してください（`--api` フラグは不要です）。
-
+**WebUI Forge** を使う場合:
 ```
-http://127.0.0.1:7861
+http://127.0.0.1:7861 で起動（--api フラグ不要）
+```
+
+**ComfyUI** を使う場合:
+```
+http://127.0.0.1:8188 で起動
+workflows/ フォルダにワークフロー JSON を配置
 ```
 
 ### 2. 依存パッケージのインストール
@@ -58,7 +65,8 @@ python app.py
 2. **プロンプトを入力**: Positive / Negative Prompt を手入力、または画像をドロップして自動読み込み
 3. **Qwen3-VL と会話**: 右カラムの入力欄にメッセージを入力して「送信」
    - プロンプト更新を提案された場合は自動でプロンプトエリアに反映されます
-4. **画像を生成**: 「画像生成」ボタンをクリック
+4. **画像を生成**: 「画像生成」ボタンをクリック（枚数指定・停止ボタンあり）
+5. **バックエンド切り替え**: 「生成パラメータ」アコーディオンからバックエンドを選択
 
 ### プロンプト自動更新
 
@@ -73,10 +81,23 @@ Negative: bad quality, worst quality, blurry, ...
 
 ### 画像のドロップ
 
-- **A1111 生成画像（PNG）**: メタデータを自動パースし、プロンプト・Steps・CFG・Sampler・サイズ・Seed を反映
+- **A1111 / WebUI Forge 生成画像（PNG）**: プロンプト・Steps・CFG・Sampler・サイズ・Seed を反映
+- **ComfyUI 生成画像（PNG）**: CLIPTextEncode ノードからポジティブ・ネガティブプロンプトを読み取り反映
 - **メタデータなし画像**: 画像のみ Qwen3-VL のコンテキストに渡し、内容を分析させることができます
 
-## モデルプリセット
+### VRAM 解放
+
+「VRAM」アコーディオンに3つのボタンがあります:
+- **LLM 解放**: Qwen3-VL モデルをアンロード（再ロードは「モデルをロード」ボタン）
+- **WebUI Forge 解放**: Forge のチェックポイントをアンロード
+- **ComfyUI 解放**: ComfyUI のモデルキャッシュを解放（`/free` エンドポイント）
+
+### ComfyUI ワークフロー
+
+`workflows/` フォルダに ComfyUI の API 形式 JSON を配置すると、ドロップダウンに自動で表示されます。
+ワークフロー内の `CLIPTextEncode` ノードのタイトルに `negative` / `ネガティブ` / `neg` が含まれるとネガティブプロンプトとして扱われます。
+
+## LLM モデルプリセット
 
 | ラベル | モデル ID | 目安 VRAM |
 |---|---|---|
@@ -92,12 +113,14 @@ Negative: bad quality, worst quality, blurry, ...
 ```
 prompt-assistant/
 ├── app.py                  # Gradio アプリ本体
-├── a1111_client.py         # Forge 2 Gradio API クライアント
+├── a1111_client.py         # WebUI Forge Gradio API クライアント
+├── comfyui_client.py       # ComfyUI REST API クライアント
 ├── qwen_client.py          # Qwen3-VL 推論クライアント
 ├── prompt_parser.py        # プロンプトパース・PNG メタデータ読み取り
 ├── settings_manager.py     # 設定の保存・読み込み
-├── discover_forge_api.py   # Forge 2 API 調査ツール（開発用）
+├── discover_forge_api.py   # Forge API 調査ツール（開発用）
 ├── requirements.txt
 ├── start.bat
+├── workflows/              # ComfyUI ワークフロー JSON
 └── models/                 # モデルキャッシュ（HF_HOME）
 ```
