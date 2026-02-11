@@ -7,9 +7,10 @@ import gradio as gr
 from PIL import Image
 
 import a1111_client
+import comfyui_client
 import qwen_client
 import settings_manager
-from prompt_parser import parse_prompt_update, read_a1111_metadata
+from prompt_parser import parse_prompt_update, read_a1111_metadata, read_comfyui_metadata
 
 DEFAULT_SAMPLER = "Euler a"
 
@@ -45,7 +46,7 @@ def on_image_drop(
         )
 
     state["current_image"] = image
-    meta = read_a1111_metadata(image)
+    meta = read_a1111_metadata(image) or read_comfyui_metadata(image)
 
     if meta is None:
         msg = "画像を読み込みました。メタデータが見つからないため、Qwen3-VL に内容を分析させることができます。"
@@ -77,7 +78,8 @@ def on_image_drop(
     height_update = gr.update(value=meta["height"]) if "height" in meta else gr.update()
     seed_update = gr.update(value=meta["seed"]) if "seed" in meta else gr.update()
 
-    msg = "メタデータを読み込み、プロンプト・パラメータを反映しました。"
+    source = "A1111" if image.info.get("parameters") else "ComfyUI"
+    msg = f"メタデータを読み込み、プロンプトを反映しました。（{source}）"
     return (
         state,
         gr.update(value=positive),
@@ -203,24 +205,34 @@ def on_generate(
     width: int,
     height: int,
     seed: int,
+    backend: str,
+    comfyui_workflow: str,
 ) -> tuple:
     """
-    「画像生成」ボタン：A1111 に生成リクエストを送る。
+    「画像生成」ボタン：選択中のバックエンドに生成リクエストを送る。
     """
     state["positive_prompt"] = positive
     state["negative_prompt"] = negative
 
     try:
-        image = a1111_client.generate_image(
-            positive=positive,
-            negative=negative,
-            steps=steps,
-            cfg=cfg,
-            sampler=sampler,
-            width=width,
-            height=height,
-            seed=seed,
-        )
+        if backend == "ComfyUI":
+            workflow_path = comfyui_client.WORKFLOW_PRESETS.get(comfyui_workflow, comfyui_workflow)
+            image = comfyui_client.generate_image(
+                workflow_path=workflow_path,
+                positive=positive,
+                negative=negative,
+            )
+        else:
+            image = a1111_client.generate_image(
+                positive=positive,
+                negative=negative,
+                steps=steps,
+                cfg=cfg,
+                sampler=sampler,
+                width=width,
+                height=height,
+                seed=seed,
+            )
         state["current_image"] = image
         return state, image, "画像を生成しました。"
     except Exception as e:
@@ -247,6 +259,16 @@ def build_ui():
     saved_width = cfg_saved.get("width", 512)
     saved_height = cfg_saved.get("height", 768)
     saved_seed = cfg_saved.get("seed", -1)
+    saved_backend = cfg_saved.get("backend", "Forge 2")
+    saved_comfyui_workflow = cfg_saved.get("comfyui_workflow", "")
+    saved_comfyui_url = cfg_saved.get("comfyui_url", "http://127.0.0.1:8188")
+
+    # ComfyUI URL を comfyui_client に反映・接続確認
+    comfyui_client.COMFYUI_URL = saved_comfyui_url
+    comfyui_client.reload_workflows()
+    workflow_list = list(comfyui_client.WORKFLOW_PRESETS.keys())
+    comfyui_sampler_list = comfyui_client.get_samplers()
+    _, comfyui_msg = comfyui_client.check_connection()
 
     # 保存されたサンプラーが一覧にない場合はフォールバック
     if saved_sampler not in sampler_list:
@@ -266,7 +288,7 @@ def build_ui():
         gr.Markdown("# Prompt Assistant")
 
         # ---- 接続ステータス ----
-        gr.Markdown(f"> **A1111 ステータス:** {a1111_msg}")
+        gr.Markdown(f"> **Forge 2:** {a1111_msg}　|　**ComfyUI:** {comfyui_msg}")
 
         # ---- メインエリア（3カラム横並び）----
         with gr.Row(equal_height=False):
@@ -305,24 +327,44 @@ def build_ui():
 
                 with gr.Accordion("生成パラメータ", open=False):
                     with gr.Row():
+                        backend_radio = gr.Radio(
+                            choices=["Forge 2", "ComfyUI"],
+                            value=saved_backend,
+                            label="バックエンド",
+                        )
+                    comfyui_workflow_dropdown = gr.Dropdown(
+                        choices=workflow_list,
+                        value=saved_comfyui_workflow if saved_comfyui_workflow in workflow_list else (workflow_list[0] if workflow_list else None),
+                        label="ComfyUI ワークフロー",
+                        visible=(saved_backend == "ComfyUI"),
+                    )
+                    with gr.Row():
                         steps_slider = gr.Slider(
-                            minimum=1, maximum=150, value=saved_steps, step=1, label="Steps"
+                            minimum=1, maximum=150, value=saved_steps, step=1, label="Steps",
+                            visible=(saved_backend != "ComfyUI"),
                         )
                         cfg_slider = gr.Slider(
-                            minimum=1.0, maximum=30.0, value=saved_cfg, step=0.5, label="CFG Scale"
+                            minimum=1.0, maximum=30.0, value=saved_cfg, step=0.5, label="CFG Scale",
+                            visible=(saved_backend != "ComfyUI"),
                         )
                     sampler_dropdown = gr.Dropdown(
                         choices=sampler_list,
                         value=saved_sampler,
                         label="Sampler",
+                        visible=(saved_backend != "ComfyUI"),
                     )
                     width_input = gr.Slider(
-                        minimum=64, maximum=2048, value=saved_width, step=8, label="Width"
+                        minimum=64, maximum=2048, value=saved_width, step=8, label="Width",
+                        visible=(saved_backend != "ComfyUI"),
                     )
                     height_input = gr.Slider(
-                        minimum=64, maximum=2048, value=saved_height, step=8, label="Height"
+                        minimum=64, maximum=2048, value=saved_height, step=8, label="Height",
+                        visible=(saved_backend != "ComfyUI"),
                     )
-                    seed_input = gr.Number(value=saved_seed, label="Seed（-1 でランダム）", precision=0)
+                    seed_input = gr.Number(
+                        value=saved_seed, label="Seed（-1 でランダム）", precision=0,
+                        visible=(saved_backend != "ComfyUI"),
+                    )
 
             # 右: Qwen3-VL 会話エリア
             with gr.Column(scale=1):
@@ -362,9 +404,10 @@ def build_ui():
             positive_prompt, negative_prompt,
             steps_slider, cfg_slider, sampler_dropdown,
             width_input, height_input, seed_input,
+            backend_radio, comfyui_workflow_dropdown,
         ]
 
-        def _save_settings(model, positive, negative, steps, cfg, sampler, width, height, seed):
+        def _save_settings(model, positive, negative, steps, cfg, sampler, width, height, seed, backend, comfyui_workflow):
             settings_manager.save({
                 "model": model,
                 "positive_prompt": positive,
@@ -375,10 +418,35 @@ def build_ui():
                 "width": int(width) if width else 512,
                 "height": int(height) if height else 768,
                 "seed": int(seed) if seed is not None else -1,
+                "backend": backend,
+                "comfyui_workflow": comfyui_workflow or "",
             })
+
+        def _on_backend_change(backend):
+            """バックエンド切り替え時に各コンポーネントの表示を切り替える。"""
+            is_comfy = backend == "ComfyUI"
+            return (
+                gr.update(visible=is_comfy),   # comfyui_workflow_dropdown
+                gr.update(visible=not is_comfy),  # steps_slider
+                gr.update(visible=not is_comfy),  # cfg_slider
+                gr.update(visible=not is_comfy),  # sampler_dropdown
+                gr.update(visible=not is_comfy),  # width_input
+                gr.update(visible=not is_comfy),  # height_input
+                gr.update(visible=not is_comfy),  # seed_input
+            )
 
         for _comp in _save_inputs:
             _comp.change(fn=_save_settings, inputs=_save_inputs, outputs=[])
+
+        backend_radio.change(
+            fn=_on_backend_change,
+            inputs=[backend_radio],
+            outputs=[
+                comfyui_workflow_dropdown,
+                steps_slider, cfg_slider, sampler_dropdown,
+                width_input, height_input, seed_input,
+            ],
+        )
 
         # ---- イベント接続 ----
 
@@ -425,6 +493,7 @@ def build_ui():
                 positive_prompt, negative_prompt,
                 steps_slider, cfg_slider, sampler_dropdown,
                 width_input, height_input, seed_input,
+                backend_radio, comfyui_workflow_dropdown,
             ],
             outputs=[state, image_display, image_status],
         )

@@ -4,6 +4,7 @@ prompt_parser.py
 - A1111 生成 PNG のメタデータからプロンプト・生成パラメータを読み取る
 """
 
+import json
 import re
 from PIL import Image
 
@@ -119,3 +120,41 @@ def read_a1111_metadata(image: Image.Image) -> dict | None:
                 pass
 
     return result
+
+
+_NEG_KEYWORDS = ("negative", "ネガティブ", "neg")
+
+
+def read_comfyui_metadata(image: Image.Image) -> dict | None:
+    """
+    ComfyUI 生成画像の PNG メタデータからプロンプトを読み取る。
+    'prompt' キーに API format JSON が埋め込まれている。
+    CLIPTextEncode ノードのタイトルに 'negative'/'ネガティブ'/'neg' が含まれれば
+    ネガティブ、それ以外はポジティブとして扱う。
+    メタデータがない場合は None を返す。
+    """
+    prompt_json = image.info.get("prompt", "")
+    if not prompt_json:
+        return None
+
+    try:
+        workflow = json.loads(prompt_json)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    positive = ""
+    negative = ""
+    for node in workflow.values():
+        if not isinstance(node, dict) or node.get("class_type") != "CLIPTextEncode":
+            continue
+        title = (node.get("_meta", {}).get("title", "") or "").lower()
+        text = node.get("inputs", {}).get("text", "")
+        if any(kw in title for kw in _NEG_KEYWORDS):
+            negative = text
+        else:
+            positive = text
+
+    if not positive and not negative:
+        return None
+
+    return {"positive": positive, "negative": negative}

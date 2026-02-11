@@ -19,6 +19,9 @@ DEFAULT_SETTINGS = {
     "width": 512,
     "height": 768,
     "seed": -1,
+    "backend": "Forge 2",
+    "comfyui_workflow": "",
+    "comfyui_url": "http://127.0.0.1:8188",
 }
 
 
