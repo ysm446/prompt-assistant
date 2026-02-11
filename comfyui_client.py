@@ -9,6 +9,7 @@ ComfyUI API クライアント（REST + WebSocket）
 import json
 import os
 import random
+import tempfile
 import uuid
 from io import BytesIO
 
@@ -39,20 +40,33 @@ _SAMPLER_MAP = {
 
 # workflows/ ディレクトリを自動スキャンして {ラベル: ファイルパス} を生成
 _WORKFLOWS_DIR = os.path.join(os.path.dirname(__file__), "workflows")
+_IMAGE_WORKFLOWS_DIR = os.path.join(_WORKFLOWS_DIR, "image")
+_VIDEO_WORKFLOWS_DIR = os.path.join(_WORKFLOWS_DIR, "video")
 
 
-def _scan_workflows() -> dict[str, str]:
-    if not os.path.isdir(_WORKFLOWS_DIR):
+def _scan_workflows(directory: str | None = None) -> dict[str, str]:
+    """指定ディレクトリの .json ファイルをスキャンして {ラベル: パス} を返す。"""
+    target = directory if directory is not None else _WORKFLOWS_DIR
+    if not os.path.isdir(target):
         return {}
     result = {}
-    for fname in sorted(os.listdir(_WORKFLOWS_DIR)):
+    for fname in sorted(os.listdir(target)):
         if fname.endswith(".json"):
             label = os.path.splitext(fname)[0]
-            result[label] = os.path.join(_WORKFLOWS_DIR, fname)
+            result[label] = os.path.join(target, fname)
     return result
 
 
-WORKFLOW_PRESETS: dict[str, str] = _scan_workflows()
+# 全ワークフロー（後方互換）
+WORKFLOW_PRESETS: dict[str, str] = {
+    **_scan_workflows(_IMAGE_WORKFLOWS_DIR),
+    **_scan_workflows(_VIDEO_WORKFLOWS_DIR),
+    **_scan_workflows(),  # ルート直下の .json もフォールバックとして含める
+}
+# 画像ワークフロー専用
+IMAGE_WORKFLOW_PRESETS: dict[str, str] = _scan_workflows(_IMAGE_WORKFLOWS_DIR) or _scan_workflows()
+# 動画ワークフロー専用
+VIDEO_WORKFLOW_PRESETS: dict[str, str] = _scan_workflows(_VIDEO_WORKFLOWS_DIR) or _scan_workflows()
 
 
 def _get_url() -> str:
@@ -90,9 +104,31 @@ def get_samplers() -> list[str]:
 
 
 def reload_workflows():
-    """workflows/ ディレクトリを再スキャンして WORKFLOW_PRESETS を更新する。"""
-    global WORKFLOW_PRESETS
-    WORKFLOW_PRESETS = _scan_workflows()
+    """workflows/ 以下を再スキャンして各 PRESETS を更新する。"""
+    global WORKFLOW_PRESETS, IMAGE_WORKFLOW_PRESETS, VIDEO_WORKFLOW_PRESETS
+    IMAGE_WORKFLOW_PRESETS = _scan_workflows(_IMAGE_WORKFLOWS_DIR) or _scan_workflows()
+    VIDEO_WORKFLOW_PRESETS = _scan_workflows(_VIDEO_WORKFLOWS_DIR) or _scan_workflows()
+    WORKFLOW_PRESETS = {
+        **_scan_workflows(_IMAGE_WORKFLOWS_DIR),
+        **_scan_workflows(_VIDEO_WORKFLOWS_DIR),
+        **_scan_workflows(),
+    }
+
+
+def upload_image(pil_image: Image.Image, filename: str = "video_input.png") -> str:
+    """PIL Image を ComfyUI の input ディレクトリにアップロードしてファイル名を返す。"""
+    base_url = _get_url()
+    buf = BytesIO()
+    pil_image.save(buf, format="PNG")
+    buf.seek(0)
+    resp = requests.post(
+        f"{base_url}/upload/image",
+        files={"image": (filename, buf, "image/png")},
+        data={"overwrite": "true"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()["name"]
 
 
 def free_vram() -> str:
@@ -124,6 +160,7 @@ def _patch_workflow(
     seed: int = -1,
     width: int | None = None,
     height: int | None = None,
+    input_image_name: str | None = None,
 ) -> dict:
     """
     ワークフロー JSON のプロンプト・seed・サイズを差し替える。
@@ -167,6 +204,9 @@ def _patch_workflow(
             if height is not None:
                 inputs["height"] = height
 
+        elif class_type == "LoadImage" and input_image_name is not None:
+            inputs["image"] = input_image_name
+
     return patched
 
 
@@ -177,10 +217,13 @@ def generate_image(
     seed: int = -1,
     width: int | None = None,
     height: int | None = None,
-) -> Image.Image:
+    input_image: Image.Image | None = None,
+) -> "Image.Image | str":
     """
-    ワークフロー JSON のプロンプト・seed・サイズを差し替えて ComfyUI で生成し、PIL.Image を返す。
+    ワークフロー JSON のプロンプト・seed・サイズを差し替えて ComfyUI で生成する。
+    画像ワークフローは PIL.Image を返す。動画ワークフローはファイルパス (str) を返す。
     seed=-1 はランダム、width/height=None はワークフロー側の値をそのまま使う。
+    input_image が指定された場合は ComfyUI にアップロードして LoadImage ノードに差し替える。
     """
     if not workflow_path or not os.path.isfile(workflow_path):
         raise FileNotFoundError(f"ワークフローファイルが見つかりません: {workflow_path}")
@@ -188,7 +231,15 @@ def generate_image(
     with open(workflow_path, encoding="utf-8") as f:
         workflow = json.load(f)
 
-    patched = _patch_workflow(workflow, positive, negative, seed=seed, width=width, height=height)
+    input_image_name = None
+    if input_image is not None:
+        input_image_name = upload_image(input_image, "video_input.png")
+
+    patched = _patch_workflow(
+        workflow, positive, negative,
+        seed=seed, width=width, height=height,
+        input_image_name=input_image_name,
+    )
 
     client_id = str(uuid.uuid4())
     base_url = _get_url()
@@ -207,34 +258,67 @@ def generate_image(
         raise RuntimeError(f"ComfyUI /prompt エラー {resp.status_code}: {detail}")
     prompt_id = resp.json()["prompt_id"]
 
-    # /history をポーリングして完了を待機（最大300秒）
+    # /history をポーリングして完了を待機（最大600秒）
+    # status.completed == True になるまで待つ（動画生成では中間ノードが先に outputs に出るため）
     import time
     outputs = {}
-    for _ in range(600):
+    for _ in range(1200):
         history = requests.get(f"{base_url}/history/{prompt_id}", timeout=10).json()
         entry = history.get(prompt_id, {})
-        # status.status_str が "error" ならエラーとして扱う
-        status_str = entry.get("status", {}).get("status_str", "")
+        status = entry.get("status", {})
+        status_str = status.get("status_str", "")
         if status_str == "error":
-            raise RuntimeError(f"ComfyUI 実行エラー（history より）: {entry.get('status')}")
-        outputs = entry.get("outputs", {})
-        if outputs:
+            raise RuntimeError(f"ComfyUI 実行エラー（history より）: {status}")
+        if status.get("completed", False):
+            outputs = entry.get("outputs", {})
             break
         time.sleep(0.5)
 
+    _VIDEO_EXTENSIONS = {".mp4", ".webm", ".avi", ".mov"}
     image_info = None
+    video_info = None
     for node_output in outputs.values():
-        images = node_output.get("images", [])
-        if images:
-            image_info = images[0]
-            break
+        # "videos" キーを最優先
+        if not video_info:
+            for v in node_output.get("videos", []):
+                video_info = v
+                break
+        # "images" キーでも動画拡張子のファイルは video_info として扱う
+        if not video_info:
+            for img in node_output.get("images", []):
+                ext = os.path.splitext(img.get("filename", ""))[1].lower()
+                if ext in _VIDEO_EXTENSIONS:
+                    video_info = img
+                    break
+        # 通常の画像
+        if not image_info:
+            for img in node_output.get("images", []):
+                ext = os.path.splitext(img.get("filename", ""))[1].lower()
+                if ext not in _VIDEO_EXTENSIONS:
+                    image_info = img
+                    break
 
-    if image_info is None:
+    if image_info is None and video_info is None:
         raise RuntimeError(
-            f"ComfyUI から画像出力が得られませんでした。"
+            f"ComfyUI から出力が得られませんでした。"
             f" outputs のキー: {list(outputs.keys()) or '空'}"
-            f"（ワークフローに SaveImage または PreviewImage ノードがあるか確認してください）"
+            f"（ワークフローに SaveImage/PreviewImage または SaveVideo ノードがあるか確認してください）"
         )
+
+    # 動画出力を優先
+    if video_info is not None:
+        params = {
+            "filename": video_info["filename"],
+            "subfolder": video_info.get("subfolder", ""),
+            "type": video_info.get("type", "output"),
+        }
+        video_resp = requests.get(f"{base_url}/view", params=params, timeout=300)
+        video_resp.raise_for_status()
+        suffix = os.path.splitext(video_info["filename"])[1] or ".mp4"
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        tmp.write(video_resp.content)
+        tmp.close()
+        return tmp.name
 
     params = {
         "filename": image_info["filename"],
@@ -243,5 +327,4 @@ def generate_image(
     }
     img_resp = requests.get(f"{base_url}/view", params=params, timeout=60)
     img_resp.raise_for_status()
-
     return Image.open(BytesIO(img_resp.content)).convert("RGB")

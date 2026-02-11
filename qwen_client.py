@@ -126,6 +126,82 @@ def _build_inputs(
     ).to(_model.device)
 
 
+_VIDEO_SYSTEM_PROMPT_TEMPLATE = """\
+あなたはWan2.2動画生成のプロンプトエンジニアリングの専門家です。
+提供された画像・画像プロンプト・追加指示を元に、動画生成プロンプトを1つ作成してください。
+
+現在の画像プロンプト: {positive_prompt}
+
+ルール:
+- プロンプトのみを出力してください（説明・前置き・コメント不要）
+- 英語で記述してください
+- 動きや変化・雰囲気を具体的に記述してください
+  （例: camera slowly zooms in, hair flowing in the wind, soft cinematic lighting）
+"""
+
+
+def generate_video_prompt_stream(
+    image: "Image.Image | None",
+    positive_prompt: str,
+    extra_instruction: str,
+):
+    """
+    画像・画像プロンプト・追加指示から動画用プロンプトをストリーミング生成する。
+    チャット履歴は使わないワンショット呼び出し。プロンプトテキストのみを yield する。
+    """
+    if not is_loaded():
+        raise RuntimeError("モデルがロードされていません。先にモデルをロードしてください。")
+
+    system_content = _VIDEO_SYSTEM_PROMPT_TEMPLATE.format(positive_prompt=positive_prompt)
+    user_content: list[dict] = []
+    if image is not None:
+        user_content.append({"type": "image", "image": image})
+    user_content.append({
+        "type": "text",
+        "text": f"追加指示: {extra_instruction}\n\n動画プロンプトを生成してください。",
+    })
+    messages = [
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": user_content},
+    ]
+
+    try:
+        text = _processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
+        )
+    except TypeError:
+        text = _processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+    image_inputs, video_inputs = process_vision_info(messages)
+    inputs = _processor(
+        text=[text],
+        images=image_inputs if image_inputs else None,
+        videos=video_inputs if video_inputs else None,
+        padding=True,
+        return_tensors="pt",
+    ).to(_model.device)
+
+    streamer = TextIteratorStreamer(
+        _processor, skip_prompt=True, skip_special_tokens=True
+    )
+
+    def _generate():
+        with torch.inference_mode():
+            _model.generate(**inputs, max_new_tokens=256, streamer=streamer)
+
+    thread = threading.Thread(target=_generate)
+    thread.start()
+    try:
+        for token in streamer:
+            yield token
+    finally:
+        thread.join()
+        del inputs
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
 def query_stream(
     conversation_history: list[dict],
     user_input: str,

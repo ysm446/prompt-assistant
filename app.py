@@ -238,7 +238,7 @@ def on_generate(
         _forge_seed_i = (_forge_seed_base + (i - 1)) if _forge_seed_base != -1 else -1
         try:
             if backend == "ComfyUI":
-                workflow_path = comfyui_client.WORKFLOW_PRESETS.get(comfyui_workflow, comfyui_workflow)
+                workflow_path = comfyui_client.IMAGE_WORKFLOW_PRESETS.get(comfyui_workflow, comfyui_workflow)
                 image = comfyui_client.generate_image(
                     workflow_path=workflow_path,
                     positive=positive,
@@ -264,6 +264,71 @@ def on_generate(
         except Exception as e:
             yield state, None, f"画像生成エラー: {e}"
             break
+
+
+def on_generate_video_prompt(state: dict, positive: str, extra_instruction: str):
+    """
+    「動画プロンプト生成」ボタン：画像・画像プロンプト・追加指示から動画プロンプトをワンショット生成する。
+    チャット履歴は使わず、video_prompt テキストボックスにストリーミング出力する。
+    """
+    if not extra_instruction.strip() and not positive.strip():
+        yield "追加指示または Positive Prompt を入力してください。"
+        return
+
+    if not qwen_client.is_loaded():
+        yield "モデルをロード中..."
+        model_id = qwen_client.MODEL_PRESETS.get(
+            state.get("model", list(qwen_client.MODEL_PRESETS.keys())[0]),
+            list(qwen_client.MODEL_PRESETS.keys())[0],
+        )
+        try:
+            qwen_client.load_model(model_id)
+        except RuntimeError as e:
+            yield f"モデルのロードに失敗しました: {e}"
+            return
+
+    accumulated = ""
+    try:
+        for token in qwen_client.generate_video_prompt_stream(
+            image=state.get("current_image"),
+            positive_prompt=positive,
+            extra_instruction=extra_instruction,
+        ):
+            accumulated += token
+            yield accumulated
+    except Exception as e:
+        yield f"動画プロンプト生成エラー: {e}"
+
+
+def on_generate_video(state: dict, video_prompt_text: str, workflow_name: str):
+    """
+    「動画生成」ボタン：ComfyUI に画像 + 動画プロンプトを送って動画を生成する。
+    """
+    image = state.get("current_image")
+    if image is None:
+        yield state, gr.update(), "画像がありません。上の画像エリアに画像をセットしてください。"
+        return
+    if not video_prompt_text.strip():
+        yield state, gr.update(), "動画プロンプトを入力してください。"
+        return
+
+    yield state, gr.update(), "動画生成中..."
+    try:
+        workflow_path = comfyui_client.VIDEO_WORKFLOW_PRESETS.get(workflow_name, workflow_name)
+        result = comfyui_client.generate_image(
+            workflow_path=workflow_path,
+            positive=video_prompt_text,
+            negative="",
+            seed=-1,
+            input_image=image,
+        )
+        if isinstance(result, str):
+            yield state, gr.update(value=result), "動画生成完了"
+        else:
+            # 動画ワークフローが画像を返した場合
+            yield state, gr.update(), "完了（動画ではなく画像として出力されました）"
+    except Exception as e:
+        yield state, gr.update(), f"動画生成エラー: {e}"
 
 
 # ---------------------------------------------------------------------------
@@ -299,7 +364,8 @@ def build_ui():
     # ComfyUI URL を comfyui_client に反映・接続確認
     comfyui_client.COMFYUI_URL = saved_comfyui_url
     comfyui_client.reload_workflows()
-    workflow_list = list(comfyui_client.WORKFLOW_PRESETS.keys())
+    workflow_list = list(comfyui_client.IMAGE_WORKFLOW_PRESETS.keys())
+    video_workflow_list = list(comfyui_client.VIDEO_WORKFLOW_PRESETS.keys())
     comfyui_sampler_list = comfyui_client.get_samplers()
     _, comfyui_msg = comfyui_client.check_connection()
 
@@ -320,117 +386,162 @@ def build_ui():
 
         gr.Markdown("# Prompt Assistant")
 
-        # ---- メインエリア（3カラム横並び）----
+        # ---- メインエリア（左+中エリア ＋ 右チャットエリア）----
         with gr.Row(equal_height=False):
 
-            # 左: 画像表示エリア（ドロップ対応）
-            with gr.Column(scale=1):
-                image_display = gr.Image(
-                    label="生成画像 / 画像をドロップしてロード",
-                    type="pil",
-                    interactive=True,
-                    height=480,
-                    sources=["upload", "clipboard"],
-                )
-                image_status = gr.Textbox(
-                    label="画像ロードステータス",
-                    interactive=False,
-                    visible=True,
-                    max_lines=2,
-                )
+            # 左+中エリア（上段: 画像生成 ／ 下段: 動画生成）
+            with gr.Column(scale=2):
 
-            # 中: プロンプト ＋ パラメータ ＋ 生成ボタン
-            with gr.Column(scale=1):
-                positive_prompt = gr.Textbox(
-                    label="Positive Prompt",
-                    value=saved_positive,
-                    lines=6,
-                    placeholder="例: 1girl, sunset, orange sky, dramatic lighting, ...",
-                )
-                negative_prompt = gr.Textbox(
-                    label="Negative Prompt",
-                    value=saved_negative,
-                    lines=3,
-                    placeholder="例: bad quality, worst quality, ...",
-                )
+                # 上段: 画像エリア
+                with gr.Row(equal_height=False):
 
-                with gr.Row():
-                    generate_btn = gr.Button("画像生成", variant="primary", scale=3)
-                    stop_btn = gr.Button("停止", variant="stop", scale=1)
-                count_input = gr.Number(
-                    value=saved_generate_count,
-                    label="生成枚数",
-                    precision=0,
-                    minimum=1,
-                )
+                    # 左: 画像表示エリア（ドロップ対応）
+                    with gr.Column(scale=1):
+                        image_display = gr.Image(
+                            label="生成画像 / 画像をドロップしてロード",
+                            type="pil",
+                            interactive=True,
+                            height=480,
+                            sources=["upload", "clipboard"],
+                        )
+                        image_status = gr.Textbox(
+                            label="画像ロードステータス",
+                            interactive=False,
+                            visible=True,
+                            max_lines=2,
+                        )
 
-                with gr.Accordion("VRAM", open=False):
-                    free_vram_status = gr.Textbox(
-                        label="VRAM解放ステータス", interactive=False, lines=2,
-                    )
-                    with gr.Row():
-                        free_qwen_btn  = gr.Button("LLM 解放",          variant="secondary", scale=1)
-                        free_forge_btn = gr.Button("WebUI Forge 解放", variant="secondary", scale=1)
-                        free_comfy_btn = gr.Button("ComfyUI 解放",     variant="secondary", scale=1)
+                    # 中: プロンプト ＋ パラメータ ＋ 生成ボタン
+                    with gr.Column(scale=1):
+                        positive_prompt = gr.Textbox(
+                            label="Positive Prompt",
+                            value=saved_positive,
+                            lines=6,
+                            placeholder="例: 1girl, sunset, orange sky, dramatic lighting, ...",
+                        )
+                        negative_prompt = gr.Textbox(
+                            label="Negative Prompt",
+                            value=saved_negative,
+                            lines=3,
+                            placeholder="例: bad quality, worst quality, ...",
+                        )
 
-                with gr.Accordion("生成パラメータ", open=False):
-                    with gr.Row():
-                        backend_radio = gr.Radio(
-                            choices=["WebUI Forge", "ComfyUI"],
-                            value=saved_backend,
-                            label="バックエンド",
+                        with gr.Row():
+                            generate_btn = gr.Button("画像生成", variant="primary", scale=3)
+                            stop_btn = gr.Button("停止", variant="stop", scale=1)
+                        count_input = gr.Number(
+                            value=saved_generate_count,
+                            label="生成枚数",
+                            precision=0,
+                            minimum=1,
                         )
-                    _initial_conn_msg = (
-                        f"ComfyUI: {comfyui_msg}" if saved_backend == "ComfyUI"
-                        else f"WebUI Forge: {a1111_msg}"
-                    )
-                    connection_status = gr.Markdown(_initial_conn_msg)
-                    comfyui_workflow_dropdown = gr.Dropdown(
-                        choices=workflow_list,
-                        value=saved_comfyui_workflow if saved_comfyui_workflow in workflow_list else (workflow_list[0] if workflow_list else None),
-                        label="ComfyUI ワークフロー",
-                        visible=(saved_backend == "ComfyUI"),
-                    )
-                    with gr.Row():
-                        steps_slider = gr.Slider(
-                            minimum=1, maximum=150, value=saved_steps, step=1, label="Steps",
-                            visible=(saved_backend != "ComfyUI"),
+
+                        with gr.Accordion("VRAM", open=False):
+                            free_vram_status = gr.Textbox(
+                                label="VRAM解放ステータス", interactive=False, lines=2,
+                            )
+                            with gr.Row():
+                                free_qwen_btn  = gr.Button("LLM 解放",          variant="secondary", scale=1)
+                                free_forge_btn = gr.Button("WebUI Forge 解放", variant="secondary", scale=1)
+                                free_comfy_btn = gr.Button("ComfyUI 解放",     variant="secondary", scale=1)
+
+                        with gr.Accordion("生成パラメータ", open=False):
+                            with gr.Row():
+                                backend_radio = gr.Radio(
+                                    choices=["WebUI Forge", "ComfyUI"],
+                                    value=saved_backend,
+                                    label="バックエンド",
+                                )
+                            _initial_conn_msg = (
+                                f"ComfyUI: {comfyui_msg}" if saved_backend == "ComfyUI"
+                                else f"WebUI Forge: {a1111_msg}"
+                            )
+                            connection_status = gr.Markdown(_initial_conn_msg)
+                            comfyui_workflow_dropdown = gr.Dropdown(
+                                choices=workflow_list,
+                                value=saved_comfyui_workflow if saved_comfyui_workflow in workflow_list else (workflow_list[0] if workflow_list else None),
+                                label="ComfyUI ワークフロー",
+                                visible=(saved_backend == "ComfyUI"),
+                            )
+                            with gr.Row():
+                                steps_slider = gr.Slider(
+                                    minimum=1, maximum=150, value=saved_steps, step=1, label="Steps",
+                                    visible=(saved_backend != "ComfyUI"),
+                                )
+                                cfg_slider = gr.Slider(
+                                    minimum=1.0, maximum=30.0, value=saved_cfg, step=0.5, label="CFG Scale",
+                                    visible=(saved_backend != "ComfyUI"),
+                                )
+                            sampler_dropdown = gr.Dropdown(
+                                choices=sampler_list,
+                                value=saved_sampler,
+                                label="Sampler",
+                                visible=(saved_backend != "ComfyUI"),
+                            )
+                            width_input = gr.Slider(
+                                minimum=64, maximum=2048, value=saved_width, step=8, label="Width",
+                                visible=(saved_backend != "ComfyUI"),
+                            )
+                            height_input = gr.Slider(
+                                minimum=64, maximum=2048, value=saved_height, step=8, label="Height",
+                                visible=(saved_backend != "ComfyUI"),
+                            )
+                            seed_input = gr.Number(
+                                value=saved_seed, label="Seed（-1 でランダム）", precision=0,
+                                visible=(saved_backend != "ComfyUI"),
+                            )
+                            with gr.Row():
+                                comfyui_width_input = gr.Slider(
+                                    minimum=64, maximum=2048, value=saved_comfyui_width, step=8, label="Width",
+                                    visible=(saved_backend == "ComfyUI"),
+                                )
+                                comfyui_height_input = gr.Slider(
+                                    minimum=64, maximum=2048, value=saved_comfyui_height, step=8, label="Height",
+                                    visible=(saved_backend == "ComfyUI"),
+                                )
+                            comfyui_seed_input = gr.Number(
+                                value=saved_comfyui_seed, label="Seed（-1 でランダム）", precision=0,
+                                visible=(saved_backend == "ComfyUI"),
+                            )
+
+                # 下段: 動画エリア
+                gr.HTML("<hr style='margin: 16px 0;'>")
+                with gr.Row(equal_height=False):
+
+                    # 左: 動画表示エリア
+                    with gr.Column(scale=1):
+                        video_display = gr.Video(
+                            label="生成動画",
+                            height=480,
                         )
-                        cfg_slider = gr.Slider(
-                            minimum=1.0, maximum=30.0, value=saved_cfg, step=0.5, label="CFG Scale",
-                            visible=(saved_backend != "ComfyUI"),
+
+                    # 中: 動画生成コントロール
+                    with gr.Column(scale=1):
+                        video_workflow_dropdown = gr.Dropdown(
+                            choices=video_workflow_list,
+                            value=video_workflow_list[0] if video_workflow_list else None,
+                            label="動画ワークフロー",
                         )
-                    sampler_dropdown = gr.Dropdown(
-                        choices=sampler_list,
-                        value=saved_sampler,
-                        label="Sampler",
-                        visible=(saved_backend != "ComfyUI"),
-                    )
-                    width_input = gr.Slider(
-                        minimum=64, maximum=2048, value=saved_width, step=8, label="Width",
-                        visible=(saved_backend != "ComfyUI"),
-                    )
-                    height_input = gr.Slider(
-                        minimum=64, maximum=2048, value=saved_height, step=8, label="Height",
-                        visible=(saved_backend != "ComfyUI"),
-                    )
-                    seed_input = gr.Number(
-                        value=saved_seed, label="Seed（-1 でランダム）", precision=0,
-                        visible=(saved_backend != "ComfyUI"),
-                    )
-                    with gr.Row():
-                        comfyui_width_input = gr.Slider(
-                            minimum=64, maximum=2048, value=saved_comfyui_width, step=8, label="Width",
-                            visible=(saved_backend == "ComfyUI"),
+                        video_extra_instruction = gr.Textbox(
+                            label="追加指示",
+                            lines=3,
+                            placeholder="例: slowly zoom in, hair flowing in the wind, cinematic lighting",
                         )
-                        comfyui_height_input = gr.Slider(
-                            minimum=64, maximum=2048, value=saved_comfyui_height, step=8, label="Height",
-                            visible=(saved_backend == "ComfyUI"),
+                        generate_video_prompt_btn = gr.Button("動画プロンプト生成", variant="secondary")
+                        video_prompt = gr.Textbox(
+                            label="動画プロンプト",
+                            lines=6,
+                            interactive=True,
+                            placeholder="「動画プロンプト生成」ボタンで自動生成、または直接入力",
                         )
-                    comfyui_seed_input = gr.Number(
-                        value=saved_comfyui_seed, label="Seed（-1 でランダム）", precision=0,
-                        visible=(saved_backend == "ComfyUI"),
-                    )
+                        with gr.Row():
+                            generate_video_btn = gr.Button("動画生成", variant="primary", scale=3)
+                            video_stop_btn = gr.Button("停止", variant="stop", scale=1)
+                        video_status = gr.Textbox(
+                            label="動画生成ステータス",
+                            interactive=False,
+                            max_lines=2,
+                        )
 
             # 右: Qwen3-VL 会話エリア
             with gr.Column(scale=1):
@@ -584,6 +695,22 @@ def build_ui():
         free_qwen_btn.click(fn=on_free_qwen,    inputs=[], outputs=[free_vram_status])
         free_forge_btn.click(fn=on_free_forge,  inputs=[], outputs=[free_vram_status])
         free_comfy_btn.click(fn=on_free_comfyui, inputs=[], outputs=[free_vram_status])
+
+        # ---- 動画生成イベント ----
+
+        gen_video_prompt_event = generate_video_prompt_btn.click(
+            fn=on_generate_video_prompt,
+            inputs=[state, positive_prompt, video_extra_instruction],
+            outputs=[video_prompt],
+        )
+
+        gen_video_event = generate_video_btn.click(
+            fn=on_generate_video,
+            inputs=[state, video_prompt, video_workflow_dropdown],
+            outputs=[state, video_display, video_status],
+        )
+
+        video_stop_btn.click(fn=None, cancels=[gen_video_prompt_event, gen_video_event])
 
     return demo
 
