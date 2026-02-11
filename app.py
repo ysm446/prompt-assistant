@@ -266,11 +266,15 @@ def on_generate(
             break
 
 
-def on_generate_video_prompt(state: dict, positive: str, extra_instruction: str):
+def on_generate_video_prompt(state: dict, positive: str, extra_instruction: str, sections: list):
     """
     「動画プロンプト生成」ボタン：画像・画像プロンプト・追加指示から動画プロンプトをワンショット生成する。
     チャット履歴は使わず、video_prompt テキストボックスにストリーミング出力する。
     """
+    if not sections:
+        yield "生成するセクションを1つ以上選択してください。"
+        return
+
     if not extra_instruction.strip() and not positive.strip():
         yield "追加指示または Positive Prompt を入力してください。"
         return
@@ -293,6 +297,7 @@ def on_generate_video_prompt(state: dict, positive: str, extra_instruction: str)
             image=state.get("current_image"),
             positive_prompt=positive,
             extra_instruction=extra_instruction,
+            sections=sections,
         ):
             accumulated += token
             yield accumulated
@@ -527,6 +532,11 @@ def build_ui():
                             lines=3,
                             placeholder="例: slowly zoom in, hair flowing in the wind, cinematic lighting",
                         )
+                        video_section_checkboxes = gr.CheckboxGroup(
+                            choices=["scene", "action", "camera", "style", "prompt"],
+                            value=["scene", "action", "camera", "style", "prompt"],
+                            label="生成するセクション",
+                        )
                         generate_video_prompt_btn = gr.Button("動画プロンプト生成", variant="secondary")
                         video_prompt = gr.Textbox(
                             label="動画プロンプト",
@@ -700,7 +710,7 @@ def build_ui():
 
         gen_video_prompt_event = generate_video_prompt_btn.click(
             fn=on_generate_video_prompt,
-            inputs=[state, positive_prompt, video_extra_instruction],
+            inputs=[state, positive_prompt, video_extra_instruction, video_section_checkboxes],
             outputs=[video_prompt],
         )
 

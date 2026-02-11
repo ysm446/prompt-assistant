@@ -126,17 +126,28 @@ def _build_inputs(
     ).to(_model.device)
 
 
+_SECTION_TEMPLATES = {
+    "scene":  "**Scene**: [Describe the visual scene in detail based on the image]",
+    "action": "**Action**: [Describe the motion/movement to add - be specific about what moves and how]",
+    "camera": "**Camera**: [Describe camera movement: static, slow pan, zoom in/out, dolly, tracking, etc.]",
+    "style":  "**Style**: [Describe the visual style and mood]",
+    "prompt": "---\n**Final Prompt for WAN 2.2**:\n[Write a single paragraph combining all elements. This should be copy-paste ready for WAN 2.2. Write in English, be concise but descriptive. Focus on motion and cinematic qualities.]",
+}
+_ALL_SECTIONS = list(_SECTION_TEMPLATES.keys())
+
 _VIDEO_SYSTEM_PROMPT_TEMPLATE = """\
 あなたはWan2.2動画生成のプロンプトエンジニアリングの専門家です。
-提供された画像・画像プロンプト・追加指示を元に、動画生成プロンプトを1つ作成してください。
+提供された画像・画像プロンプト・追加指示を元に、以下のセクションを順番に出力してください。
 
 現在の画像プロンプト: {positive_prompt}
 
+出力するセクション（指定されたものだけ出力してください）:
+{sections_text}
+
 ルール:
-- プロンプトのみを出力してください（説明・前置き・コメント不要）
+- 指定されたセクションのみを出力してください（他のセクション・前置き・コメント不要）
 - 英語で記述してください
 - 動きや変化・雰囲気を具体的に記述してください
-  （例: camera slowly zooms in, hair flowing in the wind, soft cinematic lighting）
 """
 
 
@@ -144,6 +155,7 @@ def generate_video_prompt_stream(
     image: "Image.Image | None",
     positive_prompt: str,
     extra_instruction: str,
+    sections: "list[str] | None" = None,
 ):
     """
     画像・画像プロンプト・追加指示から動画用プロンプトをストリーミング生成する。
@@ -152,7 +164,14 @@ def generate_video_prompt_stream(
     if not is_loaded():
         raise RuntimeError("モデルがロードされていません。先にモデルをロードしてください。")
 
-    system_content = _VIDEO_SYSTEM_PROMPT_TEMPLATE.format(positive_prompt=positive_prompt)
+    active_sections = sections if sections else _ALL_SECTIONS
+    sections_text = "\n".join(
+        _SECTION_TEMPLATES[s] for s in _ALL_SECTIONS if s in active_sections
+    )
+    system_content = _VIDEO_SYSTEM_PROMPT_TEMPLATE.format(
+        positive_prompt=positive_prompt,
+        sections_text=sections_text,
+    )
     user_content: list[dict] = []
     if image is not None:
         user_content.append({"type": "image", "image": image})
