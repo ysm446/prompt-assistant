@@ -150,6 +150,9 @@ _LATENT_IMAGE_NODES = (
     "EmptySD3LatentImage",
     "EmptyLatentImageSD3",
     "EmptyHunyuanLatentVideo",
+    "WanImageToVideo",
+    "WanVideoToVideo",
+    "EmptyWanLatentVideo",
 )
 
 

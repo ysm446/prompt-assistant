@@ -305,7 +305,7 @@ def on_generate_video_prompt(state: dict, positive: str, extra_instruction: str,
         yield f"動画プロンプト生成エラー: {e}"
 
 
-def on_generate_video(state: dict, video_prompt_text: str, workflow_name: str):
+def on_generate_video(state: dict, video_prompt_text: str, workflow_name: str, seed, width, height):
     """
     「動画生成」ボタン：ComfyUI に画像 + 動画プロンプトを送って動画を生成する。
     """
@@ -313,9 +313,9 @@ def on_generate_video(state: dict, video_prompt_text: str, workflow_name: str):
     if image is None:
         yield state, gr.update(), "画像がありません。上の画像エリアに画像をセットしてください。"
         return
-    if not video_prompt_text.strip():
-        yield state, gr.update(), "動画プロンプトを入力してください。"
-        return
+    actual_seed = int(seed) if seed is not None else -1
+    actual_width  = int(width)  if width  else None
+    actual_height = int(height) if height else None
 
     yield state, gr.update(), "動画生成中..."
     try:
@@ -324,7 +324,9 @@ def on_generate_video(state: dict, video_prompt_text: str, workflow_name: str):
             workflow_path=workflow_path,
             positive=video_prompt_text,
             negative="",
-            seed=-1,
+            seed=actual_seed,
+            width=actual_width,
+            height=actual_height,
             input_image=image,
         )
         if isinstance(result, str):
@@ -366,6 +368,9 @@ def build_ui():
     saved_comfyui_height = cfg_saved.get("comfyui_height", 1024)
     saved_generate_count = cfg_saved.get("generate_count", 1)
     saved_video_sections = cfg_saved.get("video_sections", ["scene", "action", "camera", "style", "prompt"])
+    saved_video_width    = cfg_saved.get("video_width", None)
+    saved_video_height   = cfg_saved.get("video_height", None)
+    saved_video_seed     = cfg_saved.get("video_seed", -1)
 
     # ComfyUI URL を comfyui_client に反映・接続確認
     comfyui_client.COMFYUI_URL = saved_comfyui_url
@@ -567,13 +572,30 @@ def build_ui():
                                 free_forge_btn = gr.Button("WebUI Forge 解放", variant="secondary", scale=1)
                                 free_comfy_btn = gr.Button("ComfyUI 解放",     variant="secondary", scale=1)
 
-                    # 列3: 動画ワークフロー + 追加指示 + セクション選択 + プロンプト生成
+                    # 列3: 動画生成パラメータ + 追加指示 + セクション選択 + プロンプト生成
                     with gr.Column(scale=1):
-                        video_workflow_dropdown = gr.Dropdown(
-                            choices=video_workflow_list,
-                            value=video_workflow_list[0] if video_workflow_list else None,
-                            label="動画ワークフロー",
-                        )
+                        with gr.Accordion("動画生成パラメータ", open=False):
+                            video_workflow_dropdown = gr.Dropdown(
+                                choices=video_workflow_list,
+                                value=video_workflow_list[0] if video_workflow_list else None,
+                                label="動画ワークフロー",
+                            )
+                            video_width_input = gr.Slider(
+                                minimum=240, maximum=1920, step=16,
+                                value=saved_video_width if saved_video_width else 848,
+                                label="Width",
+                            )
+                            video_height_input = gr.Slider(
+                                minimum=240, maximum=1920, step=16,
+                                value=saved_video_height if saved_video_height else 480,
+                                label="Height",
+                            )
+                            video_seed_input = gr.Number(
+                                value=saved_video_seed,
+                                label="Seed（-1 でランダム）",
+                                precision=0,
+                            )
+
                         video_extra_instruction = gr.Textbox(
                             label="追加指示",
                             lines=3,
@@ -597,9 +619,10 @@ def build_ui():
             comfyui_width_input, comfyui_height_input, comfyui_seed_input,
             count_input,
             video_section_checkboxes,
+            video_width_input, video_height_input, video_seed_input,
         ]
 
-        def _save_settings(model, positive, negative, steps, cfg, sampler, width, height, seed, backend, comfyui_workflow, comfyui_width, comfyui_height, comfyui_seed, generate_count, video_sections):
+        def _save_settings(model, positive, negative, steps, cfg, sampler, width, height, seed, backend, comfyui_workflow, comfyui_width, comfyui_height, comfyui_seed, generate_count, video_sections, video_width, video_height, video_seed):
             settings_manager.save({
                 "model": model,
                 "positive_prompt": positive,
@@ -617,6 +640,9 @@ def build_ui():
                 "comfyui_seed": int(comfyui_seed) if comfyui_seed is not None else -1,
                 "generate_count": int(generate_count) if generate_count is not None else 1,
                 "video_sections": video_sections or [],
+                "video_width": int(video_width) if video_width else None,
+                "video_height": int(video_height) if video_height else None,
+                "video_seed": int(video_seed) if video_seed is not None else -1,
             })
 
         def _on_backend_change(backend):
@@ -720,7 +746,7 @@ def build_ui():
 
         gen_video_event = generate_video_btn.click(
             fn=on_generate_video,
-            inputs=[state, video_prompt, video_workflow_dropdown],
+            inputs=[state, video_prompt, video_workflow_dropdown, video_seed_input, video_width_input, video_height_input],
             outputs=[state, video_display, video_status],
         )
 

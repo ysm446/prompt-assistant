@@ -1,7 +1,7 @@
 {
   "84": {
     "inputs": {
-      "clip_name": "nsfw_wan_umt5-xxl_fp8_scaled.safetensors",
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
       "type": "wan",
       "device": "default"
     },
@@ -131,7 +131,7 @@
     "inputs": {
       "fps": 16,
       "images": [
-        "87",
+        "116",
         0
       ]
     },
@@ -142,7 +142,7 @@
   },
   "95": {
     "inputs": {
-      "unet_name": "smoothMixWan2214BI2V_i2vV20High.safetensors",
+      "unet_name": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -171,8 +171,8 @@
   },
   "98": {
     "inputs": {
-      "width": 640,
-      "height": 480,
+      "width": 1008,
+      "height": 640,
       "length": 81,
       "batch_size": 1,
       "positive": [
@@ -253,7 +253,7 @@
   },
   "108": {
     "inputs": {
-      "filename_prefix": "video/Wan2.2_image_to_video",
+      "filename_prefix": "video/ComfyUI",
       "format": "auto",
       "codec": "auto",
       "video": [
@@ -264,6 +264,18 @@
     "class_type": "SaveVideo",
     "_meta": {
       "title": "ビデオを保存"
+    }
+  },
+  "116": {
+    "inputs": {
+      "frames": [
+        "87",
+        0
+      ]
+    },
+    "class_type": "VideoReverseNode",
+    "_meta": {
+      "title": "Video Reverse"
     }
   }
 }

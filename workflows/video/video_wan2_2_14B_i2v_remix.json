@@ -253,7 +253,7 @@
   },
   "108": {
     "inputs": {
-      "filename_prefix": "video/ComfyUI",
+      "filename_prefix": "video/Wan2.2_image_to_video",
       "format": "auto",
       "codec": "auto",
       "video": [

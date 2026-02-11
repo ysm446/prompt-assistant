@@ -27,6 +27,9 @@ DEFAULT_SETTINGS = {
     "comfyui_height": 1024,
     "generate_count": 1,
     "video_sections": ["scene", "action", "camera", "style", "prompt"],
+    "video_width": None,
+    "video_height": None,
+    "video_seed": -1,
 }
 
 
