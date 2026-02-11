@@ -486,7 +486,7 @@ def build_ui():
 
                         with gr.Row():
                             generate_btn = gr.Button("画像生成", variant="primary", scale=3)
-                            stop_btn = gr.Button("停止", variant="stop", scale=1)
+                            stop_btn = gr.Button("停止", variant="secondary", scale=1)
                         count_input = gr.Number(
                             value=saved_generate_count,
                             label="生成枚数",
@@ -565,8 +565,8 @@ def build_ui():
                             lines=1,
                         )
                         with gr.Row():
-                            send_btn = gr.Button("送信", scale=1, variant="secondary")
-                            clear_btn = gr.Button("クリア", scale=1, variant="stop")
+                            send_btn = gr.Button("送信", scale=1, variant="primary")
+                            clear_btn = gr.Button("クリア", scale=1, variant="secondary")
 
                         # ---- モデル設定 ----
                         with gr.Accordion("モデル設定", open=False):
@@ -610,7 +610,7 @@ def build_ui():
                         )
                         with gr.Row():
                             generate_video_btn = gr.Button("動画生成", variant="primary", scale=3)
-                            video_stop_btn = gr.Button("停止", variant="stop", scale=1)
+                            video_stop_btn = gr.Button("停止", variant="secondary", scale=1)
 
                         with gr.Accordion("VRAM", open=False):
                             free_vram_status = gr.Textbox(
@@ -655,7 +655,7 @@ def build_ui():
                             value=saved_video_sections,
                             label="生成するセクション",
                         )
-                        generate_video_prompt_btn = gr.Button("動画プロンプト生成", variant="secondary")
+                        generate_video_prompt_btn = gr.Button("動画プロンプト生成", variant="primary")
 
         # ---- 設定自動保存 ----
 

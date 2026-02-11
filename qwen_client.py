@@ -92,6 +92,7 @@ def _build_inputs(
         "[PROMPT_UPDATE]\n"
         "Positive: <新しい positive プロンプト>\n"
         "Negative: <新しい negative プロンプト>\n"
+        "最後に一言報告を添えてください。\n"
         "[/PROMPT_UPDATE]"
     )
 
