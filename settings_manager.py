@@ -25,6 +25,7 @@ DEFAULT_SETTINGS = {
     "comfyui_seed": -1,
     "comfyui_width": 1024,
     "comfyui_height": 1024,
+    "generate_count": 1,
 }
 
 

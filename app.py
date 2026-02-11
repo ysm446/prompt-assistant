@@ -210,39 +210,48 @@ def on_generate(
     comfyui_width: int,
     comfyui_height: int,
     comfyui_seed: int,
-) -> tuple:
+    count: int,
+):
     """
     「画像生成」ボタン：選択中のバックエンドに生成リクエストを送る。
+    count=1 で1枚、count>1 で指定枚数、count=0 で停止ボタンまで無限生成。
     """
     state["positive_prompt"] = positive
     state["negative_prompt"] = negative
-
-    try:
-        if backend == "ComfyUI":
-            workflow_path = comfyui_client.WORKFLOW_PRESETS.get(comfyui_workflow, comfyui_workflow)
-            image = comfyui_client.generate_image(
-                workflow_path=workflow_path,
-                positive=positive,
-                negative=negative,
-                seed=int(comfyui_seed) if comfyui_seed is not None else -1,
-                width=int(comfyui_width) if comfyui_width else None,
-                height=int(comfyui_height) if comfyui_height else None,
-            )
-        else:
-            image = a1111_client.generate_image(
-                positive=positive,
-                negative=negative,
-                steps=steps,
-                cfg=cfg,
-                sampler=sampler,
-                width=width,
-                height=height,
-                seed=seed,
-            )
-        state["current_image"] = image
-        return state, image, "画像を生成しました。"
-    except Exception as e:
-        return state, None, f"画像生成エラー: {e}"
+    count = max(1, int(count) if count is not None else 1)
+    _comfyui_seed_base = int(comfyui_seed) if comfyui_seed is not None else -1
+    _forge_seed_base = int(seed) if seed is not None else -1
+    for i in range(1, count + 1):
+        _comfyui_seed_i = (_comfyui_seed_base + (i - 1)) if _comfyui_seed_base != -1 else -1
+        _forge_seed_i = (_forge_seed_base + (i - 1)) if _forge_seed_base != -1 else -1
+        try:
+            if backend == "ComfyUI":
+                workflow_path = comfyui_client.WORKFLOW_PRESETS.get(comfyui_workflow, comfyui_workflow)
+                image = comfyui_client.generate_image(
+                    workflow_path=workflow_path,
+                    positive=positive,
+                    negative=negative,
+                    seed=_comfyui_seed_i,
+                    width=int(comfyui_width) if comfyui_width else None,
+                    height=int(comfyui_height) if comfyui_height else None,
+                )
+            else:
+                image = a1111_client.generate_image(
+                    positive=positive,
+                    negative=negative,
+                    steps=steps,
+                    cfg=cfg,
+                    sampler=sampler,
+                    width=width,
+                    height=height,
+                    seed=_forge_seed_i,
+                )
+            state["current_image"] = image
+            suffix = f"（{i}/{count}枚）" if count > 1 else ""
+            yield state, image, f"画像を生成しました。{suffix}"
+        except Exception as e:
+            yield state, None, f"画像生成エラー: {e}"
+            break
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +282,7 @@ def build_ui():
     saved_comfyui_seed = cfg_saved.get("comfyui_seed", -1)
     saved_comfyui_width = cfg_saved.get("comfyui_width", 1024)
     saved_comfyui_height = cfg_saved.get("comfyui_height", 1024)
+    saved_generate_count = cfg_saved.get("generate_count", 1)
 
     # ComfyUI URL を comfyui_client に反映・接続確認
     comfyui_client.COMFYUI_URL = saved_comfyui_url
@@ -331,7 +341,15 @@ def build_ui():
                     placeholder="例: bad quality, worst quality, ...",
                 )
 
-                generate_btn = gr.Button("画像生成", variant="primary")
+                with gr.Row():
+                    generate_btn = gr.Button("画像生成", variant="primary", scale=3)
+                    stop_btn = gr.Button("停止", variant="stop", scale=1)
+                count_input = gr.Number(
+                    value=saved_generate_count,
+                    label="生成枚数",
+                    precision=0,
+                    minimum=1,
+                )
 
                 with gr.Accordion("生成パラメータ", open=False):
                     with gr.Row():
@@ -432,9 +450,10 @@ def build_ui():
             width_input, height_input, seed_input,
             backend_radio, comfyui_workflow_dropdown,
             comfyui_width_input, comfyui_height_input, comfyui_seed_input,
+            count_input,
         ]
 
-        def _save_settings(model, positive, negative, steps, cfg, sampler, width, height, seed, backend, comfyui_workflow, comfyui_width, comfyui_height, comfyui_seed):
+        def _save_settings(model, positive, negative, steps, cfg, sampler, width, height, seed, backend, comfyui_workflow, comfyui_width, comfyui_height, comfyui_seed, generate_count):
             settings_manager.save({
                 "model": model,
                 "positive_prompt": positive,
@@ -450,6 +469,7 @@ def build_ui():
                 "comfyui_width": int(comfyui_width) if comfyui_width else 1024,
                 "comfyui_height": int(comfyui_height) if comfyui_height else 1024,
                 "comfyui_seed": int(comfyui_seed) if comfyui_seed is not None else -1,
+                "generate_count": int(generate_count) if generate_count is not None else 1,
             })
 
         def _on_backend_change(backend):
@@ -523,7 +543,7 @@ def build_ui():
             outputs=[state, chatbot, positive_prompt, negative_prompt, user_input, model_status],
         )
 
-        generate_btn.click(
+        gen_event = generate_btn.click(
             fn=on_generate,
             inputs=[
                 state,
@@ -532,9 +552,12 @@ def build_ui():
                 width_input, height_input, seed_input,
                 backend_radio, comfyui_workflow_dropdown,
                 comfyui_width_input, comfyui_height_input, comfyui_seed_input,
+                count_input,
             ],
             outputs=[state, image_display, image_status],
         )
+
+        stop_btn.click(fn=None, cancels=[gen_event])
 
     return demo
 
