@@ -54,6 +54,19 @@ def is_loaded() -> bool:
     return _model is not None and _processor is not None
 
 
+def unload_model() -> str:
+    """モデルをアンロードして VRAM を解放する。"""
+    global _model, _processor, _loaded_model_id
+    if _model is None:
+        return "Qwen3-VL モデルはロードされていません。"
+    _model = None
+    _processor = None
+    _loaded_model_id = None
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    return "Qwen3-VL モデルをアンロードしました。"
+
+
 def _build_inputs(
     conversation_history: list[dict],
     user_input: str,

@@ -67,6 +67,20 @@ def get_samplers() -> list[str]:
     return FALLBACK_SAMPLERS
 
 
+def free_vram() -> str:
+    """WebUI Forge のモデルをアンロードして VRAM を解放する。"""
+    try:
+        resp = requests.post(
+            f"{FORGE_URL}/sdapi/v1/unload-checkpoint",
+            timeout=10,
+        )
+        resp.raise_for_status()
+        _reset_client()
+        return f"WebUI Forge のモデルをアンロードしました。({FORGE_URL})"
+    except Exception as e:
+        return f"WebUI Forge VRAM 解放エラー（未対応の可能性あり）: {e}"
+
+
 def generate_image(
     positive: str,
     negative: str,

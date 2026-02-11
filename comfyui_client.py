@@ -95,6 +95,20 @@ def reload_workflows():
     WORKFLOW_PRESETS = _scan_workflows()
 
 
+def free_vram() -> str:
+    """ComfyUI のモデルをアンロードして VRAM を解放する。"""
+    try:
+        resp = requests.post(
+            f"{_get_url()}/free",
+            json={"unload_models": True, "free_memory": True},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return f"ComfyUI のモデルをアンロードしました。({_get_url()})"
+    except Exception as e:
+        return f"ComfyUI VRAM 解放エラー: {e}"
+
+
 _LATENT_IMAGE_NODES = (
     "EmptyLatentImage",
     "EmptySD3LatentImage",

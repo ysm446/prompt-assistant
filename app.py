@@ -195,6 +195,18 @@ def on_send(
     yield state, final_chatbot, positive_update, negative_update, "", status_update
 
 
+def on_free_qwen() -> str:
+    return qwen_client.unload_model()
+
+
+def on_free_forge() -> str:
+    return a1111_client.free_vram()
+
+
+def on_free_comfyui() -> str:
+    return comfyui_client.free_vram()
+
+
 def on_generate(
     state: dict,
     positive: str,
@@ -351,6 +363,15 @@ def build_ui():
                     precision=0,
                     minimum=1,
                 )
+
+                with gr.Accordion("VRAM", open=False):
+                    free_vram_status = gr.Textbox(
+                        label="VRAM解放ステータス", interactive=False, lines=2,
+                    )
+                    with gr.Row():
+                        free_qwen_btn  = gr.Button("LLM 解放",          variant="secondary", scale=1)
+                        free_forge_btn = gr.Button("WebUI Forge 解放", variant="secondary", scale=1)
+                        free_comfy_btn = gr.Button("ComfyUI 解放",     variant="secondary", scale=1)
 
                 with gr.Accordion("生成パラメータ", open=False):
                     with gr.Row():
@@ -559,6 +580,10 @@ def build_ui():
         )
 
         stop_btn.click(fn=None, cancels=[gen_event])
+
+        free_qwen_btn.click(fn=on_free_qwen,    inputs=[], outputs=[free_vram_status])
+        free_forge_btn.click(fn=on_free_forge,  inputs=[], outputs=[free_vram_status])
+        free_comfy_btn.click(fn=on_free_comfyui, inputs=[], outputs=[free_vram_status])
 
     return demo
 
