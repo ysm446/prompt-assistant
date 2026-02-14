@@ -3,6 +3,7 @@ app.py
 SD × Qwen3-VL 画像生成アシスタント - Gradio アプリ本体
 """
 
+import os
 import threading
 import time
 
@@ -262,6 +263,10 @@ def on_generate(
                     seed=_forge_seed_i,
                 )
             state["current_image"] = image
+            if backend == "ComfyUI":
+                state["current_image_stem"] = comfyui_client.get_last_output_filename()
+            else:
+                state["current_image_stem"] = time.strftime("forge_%Y%m%d_%H%M%S")
             suffix = f"（{i}/{count}枚）" if count > 1 else ""
             yield state, image, f"画像を生成しました。{suffix}"
         except Exception as e:
@@ -387,6 +392,46 @@ def on_generate_video(state: dict, video_prompt_text: str, workflow_name: str, s
         yield state, gr.update(), f"動画生成エラー: 結果が取得できませんでした"
 
 
+def on_save_text(
+    state: dict,
+    save_folder: str,
+    positive: str,
+    extra_instruction: str,
+    video_prompt_text: str,
+) -> str:
+    """
+    「テキスト保存」ボタン：画像プロンプト・追加指示・動画プロンプトをテキストファイルに保存する。
+    ファイル名は現在の画像と同じ stem を使用する。
+    """
+    stem = state.get("current_image_stem", "")
+    if not stem:
+        stem = time.strftime("prompt_%Y%m%d_%H%M%S")
+
+    folder = save_folder.strip() if save_folder.strip() else "."
+    try:
+        os.makedirs(folder, exist_ok=True)
+    except Exception as e:
+        return f"フォルダの作成に失敗しました: {e}"
+
+    filepath = os.path.join(folder, stem + ".txt")
+    lines = []
+    lines.append("=== Positive Prompt ===")
+    lines.append(positive)
+    lines.append("")
+    lines.append("=== 追加指示 ===")
+    lines.append(extra_instruction)
+    lines.append("")
+    lines.append("=== 動画プロンプト ===")
+    lines.append(video_prompt_text)
+
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+        return f"保存しました: {filepath}"
+    except Exception as e:
+        return f"保存エラー: {e}"
+
+
 # ---------------------------------------------------------------------------
 # Gradio UI 定義
 # ---------------------------------------------------------------------------
@@ -436,6 +481,7 @@ def build_ui():
     initial_state = {
         "conversation_history": [],
         "current_image": None,
+        "current_image_stem": "",
         "positive_prompt": saved_positive,
         "negative_prompt": saved_negative,
     }
@@ -657,6 +703,19 @@ def build_ui():
                         )
                         generate_video_prompt_btn = gr.Button("動画プロンプト生成", variant="primary")
 
+                        with gr.Accordion("テキスト保存", open=False):
+                            save_folder_input = gr.Textbox(
+                                label="保存先フォルダ",
+                                value="./outputs/text",
+                                placeholder="保存先フォルダのパスを入力...",
+                            )
+                            save_text_btn = gr.Button("テキスト保存", variant="secondary")
+                            save_text_status = gr.Textbox(
+                                label="保存ステータス",
+                                interactive=False,
+                                max_lines=2,
+                            )
+
         # ---- 設定自動保存 ----
 
         _save_inputs = [
@@ -804,6 +863,12 @@ def build_ui():
             inputs=[],
             outputs=[video_status],
             cancels=[gen_video_prompt_event, gen_video_event],
+        )
+
+        save_text_btn.click(
+            fn=on_save_text,
+            inputs=[state, save_folder_input, positive_prompt, video_extra_instruction, video_prompt],
+            outputs=[save_text_status],
         )
 
     return demo

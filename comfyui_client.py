@@ -153,6 +153,14 @@ def free_vram() -> str:
         return f"ComfyUI VRAM 解放エラー: {e}"
 
 
+_last_output_filename: str = ""
+
+
+def get_last_output_filename() -> str:
+    """最後に生成した出力ファイル名（拡張子なし stem）を返す。"""
+    return os.path.splitext(_last_output_filename)[0] if _last_output_filename else ""
+
+
 _LATENT_IMAGE_NODES = (
     "EmptyLatentImage",
     "EmptySD3LatentImage",
@@ -316,6 +324,8 @@ def generate_image(
             f"（ワークフローに SaveImage/PreviewImage または SaveVideo ノードがあるか確認してください）"
         )
 
+    global _last_output_filename
+
     # 動画出力を優先
     if video_info is not None:
         params = {
@@ -329,6 +339,7 @@ def generate_image(
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
         tmp.write(video_resp.content)
         tmp.close()
+        _last_output_filename = video_info["filename"]
         return tmp.name
 
     params = {
@@ -338,4 +349,5 @@ def generate_image(
     }
     img_resp = requests.get(f"{base_url}/view", params=params, timeout=60)
     img_resp.raise_for_status()
+    _last_output_filename = image_info["filename"]
     return Image.open(BytesIO(img_resp.content)).convert("RGB")
