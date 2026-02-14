@@ -691,6 +691,9 @@ def build_ui():
                                 value=saved_video_height if saved_video_height else 480,
                                 label="Height",
                             )
+                            with gr.Row():
+                                video_res_640_btn  = gr.Button("640 × 480",  variant="secondary", size="sm")
+                                video_res_1280_btn = gr.Button("1280 × 720", variant="secondary", size="sm")
                             video_seed_input = gr.Number(
                                 value=saved_video_seed,
                                 label="Seed（-1 でランダム）",
@@ -853,6 +856,17 @@ def build_ui():
         free_comfy_btn.click(fn=on_free_comfyui, inputs=[], outputs=[free_vram_status])
 
         # ---- 動画生成イベント ----
+
+        video_res_640_btn.click(
+            fn=lambda: (640, 480),
+            inputs=[],
+            outputs=[video_width_input, video_height_input],
+        )
+        video_res_1280_btn.click(
+            fn=lambda: (1280, 720),
+            inputs=[],
+            outputs=[video_width_input, video_height_input],
+        )
 
         gen_video_prompt_event = generate_video_prompt_btn.click(
             fn=on_generate_video_prompt,
