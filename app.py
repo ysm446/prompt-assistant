@@ -241,6 +241,7 @@ def on_generate(
         _comfyui_seed_i = (_comfyui_seed_base + (i - 1)) if _comfyui_seed_base != -1 else -1
         _forge_seed_i = (_forge_seed_base + (i - 1)) if _forge_seed_base != -1 else -1
         try:
+            _start = time.time()
             if backend == "ComfyUI":
                 workflow_path = comfyui_client.IMAGE_WORKFLOW_PRESETS.get(comfyui_workflow, comfyui_workflow)
                 image = comfyui_client.generate_image(
@@ -262,13 +263,14 @@ def on_generate(
                     height=height,
                     seed=_forge_seed_i,
                 )
+            elapsed = time.time() - _start
             state["current_image"] = image
             if backend == "ComfyUI":
                 state["current_image_stem"] = comfyui_client.get_last_output_filename()
             else:
                 state["current_image_stem"] = time.strftime("forge_%Y%m%d_%H%M%S")
             suffix = f"（{i}/{count}枚）" if count > 1 else ""
-            yield state, image, f"画像を生成しました。{suffix}"
+            yield state, image, f"画像を生成しました。{suffix}（{elapsed:.1f}秒）"
         except Exception as e:
             yield state, None, f"画像生成エラー: {e}"
             break
@@ -667,8 +669,6 @@ def build_ui():
                                 free_forge_btn = gr.Button("WebUI Forge 解放", variant="secondary", scale=1)
                                 free_comfy_btn = gr.Button("ComfyUI 解放",     variant="secondary", scale=1)
 
-                    # 列3: 動画生成パラメータ + 追加指示 + セクション選択 + プロンプト生成
-                    with gr.Column(scale=1):
                         with gr.Accordion("動画生成パラメータ", open=False):
                             video_workflow_dropdown = gr.Dropdown(
                                 choices=video_workflow_list,
@@ -691,6 +691,8 @@ def build_ui():
                                 precision=0,
                             )
 
+                    # 列3: 追加指示 + セクション選択 + プロンプト生成
+                    with gr.Column(scale=1):
                         video_extra_instruction = gr.Textbox(
                             label="追加指示",
                             lines=3,
