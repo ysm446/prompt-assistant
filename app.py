@@ -109,6 +109,8 @@ def on_send(
     state: dict,
     chatbot: list,
     model_label: str,
+    positive: str,
+    negative: str,
 ):
     """
     「送信」ボタン：Qwen3-VL にストリーミングで問い合わせる。
@@ -117,6 +119,10 @@ def on_send(
     if not user_input.strip():
         yield state, chatbot, gr.update(), gr.update(), "", gr.update()
         return
+
+    # UI上の現在値で state を更新
+    state["positive_prompt"] = positive
+    state["negative_prompt"] = negative
 
     auto_load_status = None
     if not qwen_client.is_loaded():
@@ -157,8 +163,8 @@ def on_send(
             conversation_history=state["conversation_history"],
             user_input=user_input,
             current_image=state.get("current_image"),
-            positive_prompt=state.get("positive_prompt", ""),
-            negative_prompt=state.get("negative_prompt", ""),
+            positive_prompt=positive,
+            negative_prompt=negative,
         ):
             partial_response += token
             streaming_chatbot[-1]["content"] = partial_response
@@ -816,13 +822,13 @@ def build_ui():
 
         send_btn.click(
             fn=on_send,
-            inputs=[user_input, state, chatbot, model_dropdown],
+            inputs=[user_input, state, chatbot, model_dropdown, positive_prompt, negative_prompt],
             outputs=[state, chatbot, positive_prompt, negative_prompt, user_input, model_status],
         )
 
         user_input.submit(
             fn=on_send,
-            inputs=[user_input, state, chatbot, model_dropdown],
+            inputs=[user_input, state, chatbot, model_dropdown, positive_prompt, negative_prompt],
             outputs=[state, chatbot, positive_prompt, negative_prompt, user_input, model_status],
         )
 
