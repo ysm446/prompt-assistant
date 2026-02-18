@@ -12,7 +12,9 @@ import requests
 from PIL import Image
 from gradio_client import Client
 
-FORGE_URL = "http://127.0.0.1:7861"
+_FORGE_HOST = "http://127.0.0.1"
+_FORGE_PORT_START = 7860
+_FORGE_PORT_END = 7880  # 7860〜7879 を探索
 
 # Forge 2 は /sdapi/v1/samplers を持たないため固定リストを使用
 FALLBACK_SAMPLERS = [
@@ -21,28 +23,40 @@ FALLBACK_SAMPLERS = [
     "DDIM", "PLMS", "UniPC", "LCM",
 ]
 
+# 接続確認済みの URL（None = 未接続）
+FORGE_URL: str | None = None
+
 # Gradio クライアントをキャッシュ（接続は一度だけ確立する）
 _client: Client | None = None
 
 
-def _get_client() -> Client:
-    global _client
-    if _client is None:
-        # gradio_client.Client() はサーバー未起動だと無限待機になるため、
-        # 先に短いタイムアウトで HTTP 疎通確認を行う
+def _find_forge_url() -> str:
+    """ポート 7860〜7879 を順番に試し、最初に応答した URL を返す。"""
+    for port in range(_FORGE_PORT_START, _FORGE_PORT_END):
+        url = f"{_FORGE_HOST}:{port}"
         try:
-            requests.get(FORGE_URL, timeout=5)
-        except Exception as e:
-            raise RuntimeError(
-                f"WebUI Forge に接続できません（{FORGE_URL}）。起動しているか確認してください。({e})"
-            )
+            requests.get(url, timeout=2)
+            return url
+        except Exception:
+            continue
+    raise RuntimeError(
+        f"WebUI Forge に接続できません。"
+        f"ポート {_FORGE_PORT_START}〜{_FORGE_PORT_END - 1} を確認しましたが応答がありませんでした。"
+    )
+
+
+def _get_client() -> Client:
+    global _client, FORGE_URL
+    if _client is None:
+        FORGE_URL = _find_forge_url()
         _client = Client(FORGE_URL, verbose=False)
     return _client
 
 
 def _reset_client() -> None:
-    global _client
+    global _client, FORGE_URL
     _client = None
+    FORGE_URL = None
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +72,8 @@ def check_connection() -> tuple[bool, str]:
     except Exception as e:
         _reset_client()
         return False, (
-            f"SD WebUI Forge に接続できません。{FORGE_URL} で起動しているか確認してください。({e})"
+            f"SD WebUI Forge に接続できません。"
+            f"ポート {_FORGE_PORT_START}〜{_FORGE_PORT_END - 1} で起動しているか確認してください。({e})"
         )
 
 
@@ -70,13 +85,17 @@ def get_samplers() -> list[str]:
 def free_vram() -> str:
     """WebUI Forge のモデルをアンロードして VRAM を解放する。"""
     try:
+        # まだ接続していない場合はポートを探索する
+        if FORGE_URL is None:
+            _get_client()
+        url = FORGE_URL
         resp = requests.post(
-            f"{FORGE_URL}/sdapi/v1/unload-checkpoint",
+            f"{url}/sdapi/v1/unload-checkpoint",
             timeout=10,
         )
         resp.raise_for_status()
         _reset_client()
-        return f"WebUI Forge のモデルをアンロードしました。({FORGE_URL})"
+        return f"WebUI Forge のモデルをアンロードしました。({url})"
     except Exception as e:
         return f"WebUI Forge VRAM 解放エラー（未対応の可能性あり）: {e}"
 
