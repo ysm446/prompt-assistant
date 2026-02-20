@@ -48,7 +48,7 @@ def on_image_drop(
             state,
             gr.update(), gr.update(),
             gr.update(), gr.update(), gr.update(),
-            gr.update(), gr.update(), gr.update(),
+            gr.update(), gr.update(), gr.update(), gr.update(),
             "画像が読み込まれました（メタデータなし）。",
         )
 
@@ -61,7 +61,7 @@ def on_image_drop(
             state,
             gr.update(), gr.update(),
             gr.update(), gr.update(), gr.update(),
-            gr.update(), gr.update(), gr.update(),
+            gr.update(), gr.update(), gr.update(), gr.update(),
             msg,
         )
 
@@ -84,6 +84,7 @@ def on_image_drop(
     width_update = gr.update(value=meta["width"]) if "width" in meta else gr.update()
     height_update = gr.update(value=meta["height"]) if "height" in meta else gr.update()
     seed_update = gr.update(value=meta["seed"]) if "seed" in meta else gr.update()
+    comfyui_seed_update = gr.update(value=meta["seed"]) if "seed" in meta else gr.update()
 
     source = "A1111" if image.info.get("parameters") else "ComfyUI"
     msg = f"メタデータを読み込み、プロンプトを反映しました。（{source}）"
@@ -97,6 +98,7 @@ def on_image_drop(
         width_update,
         height_update,
         seed_update,
+        comfyui_seed_update,
         msg,
     )
 
@@ -948,7 +950,7 @@ def build_ui():
                 state,
                 positive_prompt, negative_prompt,
                 steps_slider, cfg_slider, sampler_dropdown,
-                width_input, height_input, seed_input,
+                width_input, height_input, seed_input, comfyui_seed_input,
                 image_status,
             ],
         )
