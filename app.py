@@ -845,7 +845,12 @@ def build_ui():
         def _on_backend_change(backend):
             """バックエンド切り替え時に各コンポーネントの表示を切り替える。"""
             is_comfy = backend == "ComfyUI"
-            conn_msg = f"ComfyUI: {comfyui_msg}" if is_comfy else f"WebUI Forge: {a1111_msg}"
+            if is_comfy:
+                _, latest_msg = comfyui_client.check_connection()
+                conn_msg = f"ComfyUI: {latest_msg}"
+            else:
+                _, latest_msg = a1111_client.check_connection()
+                conn_msg = f"WebUI Forge: {latest_msg}"
             return (
                 gr.update(visible=is_comfy),        # comfyui_workflow_dropdown
                 gr.update(visible=not is_comfy),    # steps_slider

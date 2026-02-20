@@ -31,13 +31,42 @@ FORGE_URL: str | None = None
 _client: Client | None = None
 
 
+def _is_forge_gradio(url: str) -> bool:
+    """候補 URL が Forge 2 の Gradio API（/txt2img）を持つか判定する。"""
+    try:
+        client = Client(url, verbose=False)
+    except Exception:
+        return False
+
+    try:
+        config = getattr(client, "config", None)
+        if isinstance(config, dict):
+            for dep in config.get("dependencies", []) or []:
+                if dep.get("api_name") in ("/txt2img", "txt2img"):
+                    return True
+    except Exception:
+        pass
+
+    try:
+        api_info = client.view_api(return_format="dict")
+        if isinstance(api_info, dict):
+            named = api_info.get("named_endpoints", {})
+            if isinstance(named, dict) and "/txt2img" in named:
+                return True
+    except Exception:
+        pass
+
+    return False
+
+
 def _find_forge_url() -> str:
     """ポート 7860〜7879 を順番に試し、最初に応答した URL を返す。"""
     for port in range(_FORGE_PORT_START, _FORGE_PORT_END):
         url = f"{_FORGE_HOST}:{port}"
         try:
             requests.get(url, timeout=_FORGE_PROBE_TIMEOUT)
-            return url
+            if _is_forge_gradio(url):
+                return url
         except Exception:
             continue
     raise RuntimeError(
@@ -437,7 +466,13 @@ def generate_image(
     ]
     # fmt: on
 
-    result = client.predict(*args, api_name="/txt2img")
+    try:
+        result = client.predict(*args, api_name="/txt2img")
+    except Exception:
+        # クライアントが古い/切断済みの場合に一度だけ再接続して再試行
+        _reset_client()
+        client = _get_client()
+        result = client.predict(*args, api_name="/txt2img")
     return _result_to_image(result)
 
 
