@@ -511,7 +511,10 @@ def on_generate_video(
                     ext = os.path.splitext(result)[1].lower() or ".mp4"
                     if ext not in {".mp4", ".webm", ".avi", ".mov"}:
                         ext = ".mp4"
-                    filename = f"{next_seq:05d}-{int(actual_seed)}{ext}"
+                    used_seed = comfyui_client.get_last_actual_seed()
+                    if used_seed is None or int(used_seed) < 0:
+                        used_seed = int(actual_seed)
+                    filename = f"{next_seq:05d}-{int(used_seed)}{ext}"
                     save_path = os.path.join(save_dir, filename)
                     shutil.copy2(result, save_path)
                     save_status = f" / 保存: {save_path}"

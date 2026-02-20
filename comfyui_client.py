@@ -154,11 +154,16 @@ def free_vram() -> str:
 
 
 _last_output_filename: str = ""
+_last_actual_seed: int = -1
 
 
 def get_last_output_filename() -> str:
     """最後に生成した出力ファイル名（拡張子なし stem）を返す。"""
     return os.path.splitext(_last_output_filename)[0] if _last_output_filename else ""
+
+
+def get_last_actual_seed() -> int:
+    return int(_last_actual_seed)
 
 
 _LATENT_IMAGE_NODES = (
@@ -254,9 +259,13 @@ def generate_image(
     if input_image is not None:
         input_image_name = upload_image(input_image, "video_input.png")
 
+    actual_seed = random.randint(0, 2**32 - 1) if seed == -1 else int(seed)
+    global _last_actual_seed
+    _last_actual_seed = actual_seed
+
     patched = _patch_workflow(
         workflow, positive, negative,
-        seed=seed, width=width, height=height,
+        seed=actual_seed, width=width, height=height,
         input_image_name=input_image_name,
     )
 
