@@ -5,6 +5,7 @@ SD × Qwen3-VL 画像生成アシスタント - Gradio アプリ本体
 
 import os
 import re
+import shutil
 import threading
 import time
 import json
@@ -128,6 +129,22 @@ def on_set_seed_from_current_image(state: dict) -> tuple:
 
 def _get_next_image_sequence(save_dir: str) -> int:
     pattern = re.compile(r"^(\d{5})-(-?\d+)\.png$")
+    max_seq = 0
+    try:
+        for name in os.listdir(save_dir):
+            match = pattern.match(name)
+            if not match:
+                continue
+            seq = int(match.group(1))
+            if seq > max_seq:
+                max_seq = seq
+    except Exception:
+        return 1
+    return max_seq + 1
+
+
+def _get_next_video_sequence(save_dir: str) -> int:
+    pattern = re.compile(r"^(\d{5})-(-?\d+)\.(mp4|webm|avi|mov)$", re.IGNORECASE)
     max_seq = 0
     try:
         for name in os.listdir(save_dir):
@@ -416,7 +433,16 @@ def on_stop_video():
     return "動画生成をキャンセルしました"
 
 
-def on_generate_video(state: dict, video_prompt_text: str, workflow_name: str, seed, width, height):
+def on_generate_video(
+    state: dict,
+    video_prompt_text: str,
+    workflow_name: str,
+    seed,
+    width,
+    height,
+    save_generated_video: bool,
+    video_save_path: str,
+):
     """
     「動画生成」ボタン：ComfyUI に画像 + 動画プロンプトを送って動画を生成する。
     """
@@ -431,6 +457,8 @@ def on_generate_video(state: dict, video_prompt_text: str, workflow_name: str, s
     actual_seed = int(seed) if seed is not None else -1
     actual_width  = int(width)  if width  else None
     actual_height = int(height) if height else None
+    save_enabled = bool(save_generated_video)
+    save_dir = (video_save_path or "").strip() or "./outputs/videos"
 
     result_box: list = []
     error_box: list = []
@@ -475,7 +503,21 @@ def on_generate_video(state: dict, video_prompt_text: str, workflow_name: str, s
     elif result_box:
         result = result_box[0]
         if isinstance(result, str):
-            yield state, gr.update(value=result), f"動画生成完了（{elapsed:.0f}秒）"
+            save_status = ""
+            if save_enabled:
+                try:
+                    os.makedirs(save_dir, exist_ok=True)
+                    next_seq = _get_next_video_sequence(save_dir)
+                    ext = os.path.splitext(result)[1].lower() or ".mp4"
+                    if ext not in {".mp4", ".webm", ".avi", ".mov"}:
+                        ext = ".mp4"
+                    filename = f"{next_seq:05d}-{int(actual_seed)}{ext}"
+                    save_path = os.path.join(save_dir, filename)
+                    shutil.copy2(result, save_path)
+                    save_status = f" / 保存: {save_path}"
+                except Exception as save_error:
+                    save_status = f" / 保存失敗: {save_error}"
+            yield state, gr.update(value=result), f"動画生成完了（{elapsed:.0f}秒）{save_status}"
         else:
             yield state, gr.update(), f"完了（動画ではなく画像として出力されました）（{elapsed:.0f}秒）"
     else:
@@ -554,6 +596,8 @@ def build_ui():
     saved_generate_count = cfg_saved.get("generate_count", 1)
     saved_save_generated_image = cfg_saved.get("save_generated_image", False)
     saved_image_save_path = cfg_saved.get("image_save_path", "./outputs/images")
+    saved_save_generated_video = cfg_saved.get("save_generated_video", False)
+    saved_video_save_path = cfg_saved.get("video_save_path", "./outputs/videos")
     saved_video_sections = cfg_saved.get("video_sections", ["scene", "action", "camera", "style", "prompt"])
     saved_video_width    = cfg_saved.get("video_width", None)
     saved_video_height   = cfg_saved.get("video_height", None)
@@ -802,6 +846,16 @@ def build_ui():
                                 label="Seed（-1 でランダム）",
                                 precision=0,
                             )
+                            save_generated_video_checkbox = gr.Checkbox(
+                                value=saved_save_generated_video,
+                                label="動画を保存する",
+                            )
+                            video_save_path_input = gr.Textbox(
+                                value=saved_video_save_path,
+                                label="保存先URL",
+                                placeholder="例: ./outputs/videos",
+                                interactive=bool(saved_save_generated_video),
+                            )
 
                     # 列3: 追加指示 + セクション選択 + プロンプト生成
                     with gr.Column(scale=1):
@@ -841,11 +895,12 @@ def build_ui():
             comfyui_width_input, comfyui_height_input, comfyui_seed_input,
             count_input,
             save_generated_image_checkbox, image_save_path_input,
+            save_generated_video_checkbox, video_save_path_input,
             video_section_checkboxes,
             video_width_input, video_height_input, video_seed_input,
         ]
 
-        def _save_settings(model, positive, negative, steps, cfg, sampler, width, height, seed, backend, comfyui_workflow, comfyui_width, comfyui_height, comfyui_seed, generate_count, save_generated_image, image_save_path, video_sections, video_width, video_height, video_seed):
+        def _save_settings(model, positive, negative, steps, cfg, sampler, width, height, seed, backend, comfyui_workflow, comfyui_width, comfyui_height, comfyui_seed, generate_count, save_generated_image, image_save_path, save_generated_video, video_save_path, video_sections, video_width, video_height, video_seed):
             settings_manager.save({
                 "model": model,
                 "positive_prompt": positive,
@@ -864,6 +919,8 @@ def build_ui():
                 "generate_count": int(generate_count) if generate_count is not None else 1,
                 "save_generated_image": bool(save_generated_image),
                 "image_save_path": (image_save_path or "").strip() or "./outputs/images",
+                "save_generated_video": bool(save_generated_video),
+                "video_save_path": (video_save_path or "").strip() or "./outputs/videos",
                 "video_sections": video_sections or [],
                 "video_width": int(video_width) if video_width else None,
                 "video_height": int(video_height) if video_height else None,
@@ -900,6 +957,9 @@ def build_ui():
         def _on_save_image_toggle(enabled):
             return gr.update(interactive=bool(enabled))
 
+        def _on_save_video_toggle(enabled):
+            return gr.update(interactive=bool(enabled))
+
         for _comp in _save_inputs:
             _comp.change(fn=_save_settings, inputs=_save_inputs, outputs=[])
 
@@ -920,6 +980,11 @@ def build_ui():
             fn=_on_save_image_toggle,
             inputs=[save_generated_image_checkbox],
             outputs=[image_save_path_input],
+        )
+        save_generated_video_checkbox.change(
+            fn=_on_save_video_toggle,
+            inputs=[save_generated_video_checkbox],
+            outputs=[video_save_path_input],
         )
 
         # ---- イベント接続 ----
@@ -1015,7 +1080,7 @@ def build_ui():
 
         gen_video_event = generate_video_btn.click(
             fn=on_generate_video,
-            inputs=[state, video_prompt, video_workflow_dropdown, video_seed_input, video_width_input, video_height_input],
+            inputs=[state, video_prompt, video_workflow_dropdown, video_seed_input, video_width_input, video_height_input, save_generated_video_checkbox, video_save_path_input],
             outputs=[state, video_display, video_status],
         )
 
