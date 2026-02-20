@@ -104,6 +104,23 @@ def on_clear(state: dict) -> tuple:
     return state, []
 
 
+def on_set_seed_random() -> int:
+    return -1
+
+
+def on_set_seed_from_current_image(state: dict) -> tuple:
+    image = state.get("current_image")
+    if image is None:
+        return gr.update(), "現在の画像がないため Seed を取得できません。"
+
+    meta = read_a1111_metadata(image) or read_comfyui_metadata(image)
+    if meta is None or "seed" not in meta:
+        return gr.update(), "現在の画像のメタデータに Seed がありません。"
+
+    seed = int(meta["seed"])
+    return gr.update(value=seed), f"現在の画像の Seed を反映しました: {seed}"
+
+
 def on_send(
     user_input: str,
     state: dict,
@@ -589,10 +606,14 @@ def build_ui():
                                 minimum=64, maximum=2048, value=saved_height, step=8, label="Height",
                                 visible=(saved_backend != "ComfyUI"),
                             )
-                            seed_input = gr.Number(
-                                value=saved_seed, label="Seed（-1 でランダム）", precision=0,
-                                visible=(saved_backend != "ComfyUI"),
-                            )
+                            with gr.Row():
+                                seed_input = gr.Number(
+                                    value=saved_seed, label="Seed（-1 でランダム）", precision=0,
+                                    visible=(saved_backend != "ComfyUI"),
+                                    scale=8,
+                                )
+                                seed_random_btn = gr.Button("🎲", size="sm", visible=(saved_backend != "ComfyUI"), scale=1, min_width=48)
+                                seed_from_image_btn = gr.Button("♻️", size="sm", visible=(saved_backend != "ComfyUI"), scale=1, min_width=48)
                             with gr.Row():
                                 comfyui_width_input = gr.Slider(
                                     minimum=64, maximum=2048, value=saved_comfyui_width, step=8, label="Width",
@@ -602,10 +623,14 @@ def build_ui():
                                     minimum=64, maximum=2048, value=saved_comfyui_height, step=8, label="Height",
                                     visible=(saved_backend == "ComfyUI"),
                                 )
-                            comfyui_seed_input = gr.Number(
-                                value=saved_comfyui_seed, label="Seed（-1 でランダム）", precision=0,
-                                visible=(saved_backend == "ComfyUI"),
-                            )
+                            with gr.Row():
+                                comfyui_seed_input = gr.Number(
+                                    value=saved_comfyui_seed, label="Seed（-1 でランダム）", precision=0,
+                                    visible=(saved_backend == "ComfyUI"),
+                                    scale=8,
+                                )
+                                comfyui_seed_random_btn = gr.Button("🎲", size="sm", visible=(saved_backend == "ComfyUI"), scale=1, min_width=48)
+                                comfyui_seed_from_image_btn = gr.Button("♻️", size="sm", visible=(saved_backend == "ComfyUI"), scale=1, min_width=48)
 
                     # 右: Qwen3-VL 会話エリア
                     with gr.Column(scale=1):
@@ -776,9 +801,13 @@ def build_ui():
                 gr.update(visible=not is_comfy),    # width_input
                 gr.update(visible=not is_comfy),    # height_input
                 gr.update(visible=not is_comfy),    # seed_input
+                gr.update(visible=not is_comfy),    # seed_random_btn
+                gr.update(visible=not is_comfy),    # seed_from_image_btn
                 gr.update(visible=is_comfy),        # comfyui_width_input
                 gr.update(visible=is_comfy),        # comfyui_height_input
                 gr.update(visible=is_comfy),        # comfyui_seed_input
+                gr.update(visible=is_comfy),        # comfyui_seed_random_btn
+                gr.update(visible=is_comfy),        # comfyui_seed_from_image_btn
                 gr.update(value=conn_msg),          # connection_status
             )
 
@@ -792,12 +821,27 @@ def build_ui():
                 comfyui_workflow_dropdown,
                 steps_slider, cfg_slider, sampler_dropdown,
                 width_input, height_input, seed_input,
+                seed_random_btn, seed_from_image_btn,
                 comfyui_width_input, comfyui_height_input, comfyui_seed_input,
+                comfyui_seed_random_btn, comfyui_seed_from_image_btn,
                 connection_status,
             ],
         )
 
         # ---- イベント接続 ----
+
+        seed_random_btn.click(fn=on_set_seed_random, inputs=[], outputs=[seed_input])
+        comfyui_seed_random_btn.click(fn=on_set_seed_random, inputs=[], outputs=[comfyui_seed_input])
+        seed_from_image_btn.click(
+            fn=on_set_seed_from_current_image,
+            inputs=[state],
+            outputs=[seed_input, image_status],
+        )
+        comfyui_seed_from_image_btn.click(
+            fn=on_set_seed_from_current_image,
+            inputs=[state],
+            outputs=[comfyui_seed_input, image_status],
+        )
 
         load_btn.click(
             fn=on_load_model,
