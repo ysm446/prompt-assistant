@@ -144,17 +144,35 @@ def read_comfyui_metadata(image: Image.Image) -> dict | None:
 
     positive = ""
     negative = ""
+    seed = None
     for node in workflow.values():
-        if not isinstance(node, dict) or node.get("class_type") != "CLIPTextEncode":
+        if not isinstance(node, dict):
             continue
-        title = (node.get("_meta", {}).get("title", "") or "").lower()
-        text = node.get("inputs", {}).get("text", "")
-        if any(kw in title for kw in _NEG_KEYWORDS):
-            negative = text
-        else:
-            positive = text
+        class_type = node.get("class_type", "")
+        inputs = node.get("inputs", {}) or {}
 
-    if not positive and not negative:
+        if class_type == "CLIPTextEncode":
+            title = (node.get("_meta", {}).get("title", "") or "").lower()
+            text = inputs.get("text", "")
+            if any(kw in title for kw in _NEG_KEYWORDS):
+                negative = text
+            else:
+                positive = text
+
+        if seed is None and class_type in ("KSampler", "KSamplerAdvanced"):
+            for key in ("seed", "noise_seed"):
+                if key in inputs:
+                    try:
+                        seed = int(inputs[key])
+                    except (ValueError, TypeError):
+                        seed = None
+                    if seed is not None:
+                        break
+
+    if not positive and not negative and seed is None:
         return None
 
-    return {"positive": positive, "negative": negative}
+    result = {"positive": positive, "negative": negative}
+    if seed is not None:
+        result["seed"] = seed
+    return result

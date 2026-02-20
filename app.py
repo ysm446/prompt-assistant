@@ -7,9 +7,11 @@ import os
 import re
 import threading
 import time
+import json
 
 import gradio as gr
 from PIL import Image
+from PIL.PngImagePlugin import PngInfo
 
 import a1111_client
 import comfyui_client
@@ -136,6 +138,26 @@ def _get_next_image_sequence(save_dir: str) -> int:
     except Exception:
         return 1
     return max_seq + 1
+
+
+def _build_pnginfo_from_image(image: Image.Image) -> PngInfo | None:
+    info = getattr(image, "info", {}) or {}
+    pnginfo = PngInfo()
+    added = False
+    for key, value in info.items():
+        if value is None:
+            continue
+        if isinstance(value, str):
+            pnginfo.add_text(str(key), value)
+            added = True
+            continue
+        if isinstance(value, (dict, list)):
+            try:
+                pnginfo.add_text(str(key), json.dumps(value, ensure_ascii=False))
+                added = True
+            except Exception:
+                continue
+    return pnginfo if added else None
 
 
 def on_send(
@@ -325,7 +347,11 @@ def on_generate(
                     next_seq = _get_next_image_sequence(save_dir)
                     filename = f"{next_seq:05d}-{seed_value}.png"
                     save_path = os.path.join(save_dir, filename)
-                    image.save(save_path)
+                    pnginfo = _build_pnginfo_from_image(image)
+                    if pnginfo is not None:
+                        image.save(save_path, pnginfo=pnginfo)
+                    else:
+                        image.save(save_path)
                     save_status = f" / 保存: {save_path}"
                 except Exception as save_error:
                     save_status = f" / 保存失敗: {save_error}"

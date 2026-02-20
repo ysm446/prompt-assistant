@@ -350,4 +350,6 @@ def generate_image(
     img_resp = requests.get(f"{base_url}/view", params=params, timeout=60)
     img_resp.raise_for_status()
     _last_output_filename = image_info["filename"]
-    return Image.open(BytesIO(img_resp.content)).convert("RGB")
+    img = Image.open(BytesIO(img_resp.content))
+    img.load()
+    return img.copy()
