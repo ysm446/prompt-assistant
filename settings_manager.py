@@ -27,6 +27,8 @@ DEFAULT_SETTINGS = {
     "comfyui_width": 1024,
     "comfyui_height": 1024,
     "generate_count": 1,
+    "save_generated_image": False,
+    "image_save_path": "./outputs/images",
     "video_sections": ["scene", "action", "camera", "style", "prompt"],
     "video_width": None,
     "video_height": None,

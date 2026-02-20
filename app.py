@@ -250,6 +250,8 @@ def on_generate(
     comfyui_height: int,
     comfyui_seed: int,
     count: int,
+    save_generated_image: bool,
+    image_save_path: str,
 ):
     """
     「画像生成」ボタン：選択中のバックエンドに生成リクエストを送る。
@@ -258,6 +260,8 @@ def on_generate(
     state["positive_prompt"] = positive
     state["negative_prompt"] = negative
     count = max(1, int(count) if count is not None else 1)
+    save_enabled = bool(save_generated_image)
+    save_dir = (image_save_path or "").strip() or "./outputs/images"
     _comfyui_seed_base = int(comfyui_seed) if comfyui_seed is not None else -1
     _forge_seed_base = int(seed) if seed is not None else -1
     for i in range(1, count + 1):
@@ -292,8 +296,19 @@ def on_generate(
                 state["current_image_stem"] = comfyui_client.get_last_output_filename()
             else:
                 state["current_image_stem"] = time.strftime("forge_%Y%m%d_%H%M%S")
+            save_status = ""
+            if save_enabled:
+                try:
+                    os.makedirs(save_dir, exist_ok=True)
+                    stem = state.get("current_image_stem") or time.strftime("image_%Y%m%d_%H%M%S")
+                    filename = f"{stem}_{i}.png" if count > 1 else f"{stem}.png"
+                    save_path = os.path.join(save_dir, filename)
+                    image.save(save_path)
+                    save_status = f" / 保存: {save_path}"
+                except Exception as save_error:
+                    save_status = f" / 保存失敗: {save_error}"
             suffix = f"（{i}/{count}枚）" if count > 1 else ""
-            yield state, image, f"画像を生成しました。{suffix}（{elapsed:.1f}秒）"
+            yield state, image, f"画像を生成しました。{suffix}（{elapsed:.1f}秒）{save_status}"
         except Exception as e:
             yield state, None, f"画像生成エラー: {e}"
             break
@@ -486,6 +501,8 @@ def build_ui():
     saved_comfyui_width = cfg_saved.get("comfyui_width", 1024)
     saved_comfyui_height = cfg_saved.get("comfyui_height", 1024)
     saved_generate_count = cfg_saved.get("generate_count", 1)
+    saved_save_generated_image = cfg_saved.get("save_generated_image", False)
+    saved_image_save_path = cfg_saved.get("image_save_path", "./outputs/images")
     saved_video_sections = cfg_saved.get("video_sections", ["scene", "action", "camera", "style", "prompt"])
     saved_video_width    = cfg_saved.get("video_width", None)
     saved_video_height   = cfg_saved.get("video_height", None)
@@ -563,6 +580,16 @@ def build_ui():
                             label="生成枚数",
                             precision=0,
                             minimum=1,
+                        )
+                        save_generated_image_checkbox = gr.Checkbox(
+                            value=saved_save_generated_image,
+                            label="画像を保存する",
+                        )
+                        image_save_path_input = gr.Textbox(
+                            value=saved_image_save_path,
+                            label="保存先パス",
+                            placeholder="例: ./outputs/images",
+                            interactive=bool(saved_save_generated_image),
                         )
 
                         with gr.Accordion("画像生成パラメータ", open=False):
@@ -762,11 +789,12 @@ def build_ui():
             backend_radio, comfyui_workflow_dropdown,
             comfyui_width_input, comfyui_height_input, comfyui_seed_input,
             count_input,
+            save_generated_image_checkbox, image_save_path_input,
             video_section_checkboxes,
             video_width_input, video_height_input, video_seed_input,
         ]
 
-        def _save_settings(model, positive, negative, steps, cfg, sampler, width, height, seed, backend, comfyui_workflow, comfyui_width, comfyui_height, comfyui_seed, generate_count, video_sections, video_width, video_height, video_seed):
+        def _save_settings(model, positive, negative, steps, cfg, sampler, width, height, seed, backend, comfyui_workflow, comfyui_width, comfyui_height, comfyui_seed, generate_count, save_generated_image, image_save_path, video_sections, video_width, video_height, video_seed):
             settings_manager.save({
                 "model": model,
                 "positive_prompt": positive,
@@ -783,6 +811,8 @@ def build_ui():
                 "comfyui_height": int(comfyui_height) if comfyui_height else 1024,
                 "comfyui_seed": int(comfyui_seed) if comfyui_seed is not None else -1,
                 "generate_count": int(generate_count) if generate_count is not None else 1,
+                "save_generated_image": bool(save_generated_image),
+                "image_save_path": (image_save_path or "").strip() or "./outputs/images",
                 "video_sections": video_sections or [],
                 "video_width": int(video_width) if video_width else None,
                 "video_height": int(video_height) if video_height else None,
@@ -811,6 +841,9 @@ def build_ui():
                 gr.update(value=conn_msg),          # connection_status
             )
 
+        def _on_save_image_toggle(enabled):
+            return gr.update(interactive=bool(enabled))
+
         for _comp in _save_inputs:
             _comp.change(fn=_save_settings, inputs=_save_inputs, outputs=[])
 
@@ -826,6 +859,11 @@ def build_ui():
                 comfyui_seed_random_btn, comfyui_seed_from_image_btn,
                 connection_status,
             ],
+        )
+        save_generated_image_checkbox.change(
+            fn=_on_save_image_toggle,
+            inputs=[save_generated_image_checkbox],
+            outputs=[image_save_path_input],
         )
 
         # ---- イベント接続 ----
@@ -889,6 +927,7 @@ def build_ui():
                 backend_radio, comfyui_workflow_dropdown,
                 comfyui_width_input, comfyui_height_input, comfyui_seed_input,
                 count_input,
+                save_generated_image_checkbox, image_save_path_input,
             ],
             outputs=[state, image_display, image_status],
         )
