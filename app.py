@@ -4,6 +4,7 @@ SD × Qwen3-VL 画像生成アシスタント - Gradio アプリ本体
 """
 
 import os
+import re
 import threading
 import time
 
@@ -119,6 +120,22 @@ def on_set_seed_from_current_image(state: dict) -> tuple:
 
     seed = int(meta["seed"])
     return gr.update(value=seed), f"現在の画像の Seed を反映しました: {seed}"
+
+
+def _get_next_image_sequence(save_dir: str) -> int:
+    pattern = re.compile(r"^(\d{5})-(-?\d+)\.png$")
+    max_seq = 0
+    try:
+        for name in os.listdir(save_dir):
+            match = pattern.match(name)
+            if not match:
+                continue
+            seq = int(match.group(1))
+            if seq > max_seq:
+                max_seq = seq
+    except Exception:
+        return 1
+    return max_seq + 1
 
 
 def on_send(
@@ -300,8 +317,13 @@ def on_generate(
             if save_enabled:
                 try:
                     os.makedirs(save_dir, exist_ok=True)
-                    stem = state.get("current_image_stem") or time.strftime("image_%Y%m%d_%H%M%S")
-                    filename = f"{stem}_{i}.png" if count > 1 else f"{stem}.png"
+                    meta = read_a1111_metadata(image) or read_comfyui_metadata(image) or {}
+                    seed_value = meta.get("seed")
+                    if seed_value is None:
+                        seed_value = _comfyui_seed_i if backend == "ComfyUI" else _forge_seed_i
+                    seed_value = int(seed_value)
+                    next_seq = _get_next_image_sequence(save_dir)
+                    filename = f"{next_seq:05d}-{seed_value}.png"
                     save_path = os.path.join(save_dir, filename)
                     image.save(save_path)
                     save_status = f" / 保存: {save_path}"
@@ -477,9 +499,10 @@ def on_save_text(
 # ---------------------------------------------------------------------------
 
 def build_ui():
-    # アプリ起動時に A1111 接続確認とサンプラー一覧を取得
-    a1111_ok, a1111_msg = a1111_client.check_connection()
-    sampler_list = a1111_client.get_samplers() if a1111_ok else [DEFAULT_SAMPLER]
+    # Forge 未起動時でも UI 起動をブロックしないため、起動時チェックは行わない
+    # 接続確認は実際に Forge を使う操作時に行う
+    a1111_msg = "未確認（起動時チェックをスキップ）"
+    sampler_list = a1111_client.get_samplers()
 
     # 保存済み設定をロード
     cfg_saved = settings_manager.load()

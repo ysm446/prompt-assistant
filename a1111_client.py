@@ -15,6 +15,7 @@ from gradio_client import Client
 _FORGE_HOST = "http://127.0.0.1"
 _FORGE_PORT_START = 7860
 _FORGE_PORT_END = 7880  # 7860〜7879 を探索
+_FORGE_PROBE_TIMEOUT = 0.25
 
 # Forge 2 は /sdapi/v1/samplers を持たないため固定リストを使用
 FALLBACK_SAMPLERS = [
@@ -35,7 +36,7 @@ def _find_forge_url() -> str:
     for port in range(_FORGE_PORT_START, _FORGE_PORT_END):
         url = f"{_FORGE_HOST}:{port}"
         try:
-            requests.get(url, timeout=2)
+            requests.get(url, timeout=_FORGE_PROBE_TIMEOUT)
             return url
         except Exception:
             continue
