@@ -1,6 +1,6 @@
 """
 app.py
-SD × Qwen3-VL 画像生成アシスタント - Gradio アプリ本体
+Qwen3-VL 画像生成アシスタント - Gradio アプリ本体
 """
 
 import os
@@ -679,16 +679,6 @@ def build_ui():
                             precision=0,
                             minimum=1,
                         )
-                        save_generated_image_checkbox = gr.Checkbox(
-                            value=saved_save_generated_image,
-                            label="画像を保存する",
-                        )
-                        image_save_path_input = gr.Textbox(
-                            value=saved_image_save_path,
-                            label="保存先パス",
-                            placeholder="例: ./outputs/images",
-                            interactive=bool(saved_save_generated_image),
-                        )
 
                         with gr.Accordion("画像生成パラメータ", open=False):
                             with gr.Row():
@@ -756,6 +746,16 @@ def build_ui():
                                 )
                                 comfyui_seed_random_btn = gr.Button("🎲", size="sm", visible=(saved_backend == "ComfyUI"), scale=1, min_width=48)
                                 comfyui_seed_from_image_btn = gr.Button("♻️", size="sm", visible=(saved_backend == "ComfyUI"), scale=1, min_width=48)
+                            save_generated_image_checkbox = gr.Checkbox(
+                                value=saved_save_generated_image,
+                                label="画像を保存する",
+                            )
+                            image_save_path_input = gr.Textbox(
+                                value=saved_image_save_path,
+                                label="保存先パス",
+                                placeholder="例: ./outputs/images",
+                                interactive=bool(saved_save_generated_image),
+                            )
 
                     # 右: Qwen3-VL 会話エリア
                     with gr.Column(scale=1):
