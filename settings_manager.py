@@ -29,6 +29,8 @@ DEFAULT_SETTINGS = {
     "generate_count": 1,
     "save_generated_image": False,
     "image_save_path": "./outputs/images",
+    "video_workflow": "",
+    "text_save_path": "./outputs/text",
     "video_sections": ["scene", "action", "camera", "style", "prompt"],
     "video_width": None,
     "video_height": None,

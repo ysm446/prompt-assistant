@@ -601,6 +601,8 @@ def build_ui():
     saved_image_save_path = cfg_saved.get("image_save_path", "./outputs/images")
     saved_save_generated_video = cfg_saved.get("save_generated_video", False)
     saved_video_save_path = cfg_saved.get("video_save_path", "./outputs/videos")
+    saved_video_workflow = cfg_saved.get("video_workflow", "")
+    saved_text_save_path = cfg_saved.get("text_save_path", "./outputs/text")
     saved_video_sections = cfg_saved.get("video_sections", ["scene", "action", "camera", "style", "prompt"])
     saved_video_width    = cfg_saved.get("video_width", None)
     saved_video_height   = cfg_saved.get("video_height", None)
@@ -828,7 +830,7 @@ def build_ui():
                         with gr.Accordion("動画生成パラメータ", open=False):
                             video_workflow_dropdown = gr.Dropdown(
                                 choices=video_workflow_list,
-                                value=video_workflow_list[0] if video_workflow_list else None,
+                                value=saved_video_workflow if saved_video_workflow in video_workflow_list else (video_workflow_list[0] if video_workflow_list else None),
                                 label="動画ワークフロー",
                             )
                             video_width_input = gr.Slider(
@@ -877,7 +879,7 @@ def build_ui():
                         with gr.Accordion("テキスト保存", open=False):
                             save_folder_input = gr.Textbox(
                                 label="保存先フォルダ",
-                                value="./outputs/text",
+                                value=saved_text_save_path,
                                 placeholder="保存先フォルダのパスを入力...",
                             )
                             save_text_btn = gr.Button("テキスト保存", variant="secondary")
@@ -899,11 +901,12 @@ def build_ui():
             count_input,
             save_generated_image_checkbox, image_save_path_input,
             save_generated_video_checkbox, video_save_path_input,
+            video_workflow_dropdown, save_folder_input,
             video_section_checkboxes,
             video_width_input, video_height_input, video_seed_input,
         ]
 
-        def _save_settings(model, positive, negative, steps, cfg, sampler, width, height, seed, backend, comfyui_workflow, comfyui_width, comfyui_height, comfyui_seed, generate_count, save_generated_image, image_save_path, save_generated_video, video_save_path, video_sections, video_width, video_height, video_seed):
+        def _save_settings(model, positive, negative, steps, cfg, sampler, width, height, seed, backend, comfyui_workflow, comfyui_width, comfyui_height, comfyui_seed, generate_count, save_generated_image, image_save_path, save_generated_video, video_save_path, video_workflow, text_save_path, video_sections, video_width, video_height, video_seed):
             settings_manager.save({
                 "model": model,
                 "positive_prompt": positive,
@@ -924,6 +927,8 @@ def build_ui():
                 "image_save_path": (image_save_path or "").strip() or "./outputs/images",
                 "save_generated_video": bool(save_generated_video),
                 "video_save_path": (video_save_path or "").strip() or "./outputs/videos",
+                "video_workflow": (video_workflow or "").strip(),
+                "text_save_path": (text_save_path or "").strip() or "./outputs/text",
                 "video_sections": video_sections or [],
                 "video_width": int(video_width) if video_width else None,
                 "video_height": int(video_height) if video_height else None,
