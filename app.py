@@ -284,9 +284,6 @@ def on_free_qwen() -> str:
     return qwen_client.unload_model()
 
 
-def on_free_forge() -> str:
-    return a1111_client.free_vram()
-
 
 def on_free_comfyui() -> str:
     return comfyui_client.free_vram()
@@ -442,6 +439,7 @@ def on_generate_video(
     height,
     save_generated_video: bool,
     video_save_path: str,
+    unload_llm_before_video: bool = False,
 ):
     """
     「動画生成」ボタン：ComfyUI に画像 + 動画プロンプトを送って動画を生成する。
@@ -449,6 +447,9 @@ def on_generate_video(
     global _video_gen_id
     _video_gen_id += 1
     my_id = _video_gen_id
+
+    if unload_llm_before_video:
+        qwen_client.unload_model()
 
     image = state.get("current_image")
     if image is None:
@@ -823,9 +824,12 @@ def build_ui():
                                 label="VRAM解放ステータス", interactive=False, lines=2,
                             )
                             with gr.Row():
-                                free_qwen_btn  = gr.Button("LLM 解放",          variant="secondary", scale=1)
-                                free_forge_btn = gr.Button("WebUI Forge 解放", variant="secondary", scale=1)
-                                free_comfy_btn = gr.Button("ComfyUI 解放",     variant="secondary", scale=1)
+                                free_qwen_btn  = gr.Button("LLM 解放",      variant="secondary", scale=1)
+                                free_comfy_btn = gr.Button("ComfyUI 解放", variant="secondary", scale=1)
+                            unload_llm_before_video_checkbox = gr.Checkbox(
+                                value=False,
+                                label="動画生成前にLLMのメモリを解放する",
+                            )
 
                         with gr.Accordion("動画生成パラメータ", open=False):
                             video_workflow_dropdown = gr.Dropdown(
@@ -1063,8 +1067,7 @@ def build_ui():
 
         stop_btn.click(fn=None, cancels=[gen_event])
 
-        free_qwen_btn.click(fn=on_free_qwen,    inputs=[], outputs=[free_vram_status])
-        free_forge_btn.click(fn=on_free_forge,  inputs=[], outputs=[free_vram_status])
+        free_qwen_btn.click(fn=on_free_qwen,     inputs=[], outputs=[free_vram_status])
         free_comfy_btn.click(fn=on_free_comfyui, inputs=[], outputs=[free_vram_status])
 
         # ---- 動画生成イベント ----
@@ -1088,7 +1091,7 @@ def build_ui():
 
         gen_video_event = generate_video_btn.click(
             fn=on_generate_video,
-            inputs=[state, video_prompt, video_workflow_dropdown, video_seed_input, video_width_input, video_height_input, save_generated_video_checkbox, video_save_path_input],
+            inputs=[state, video_prompt, video_workflow_dropdown, video_seed_input, video_width_input, video_height_input, save_generated_video_checkbox, video_save_path_input, unload_llm_before_video_checkbox],
             outputs=[state, video_display, video_status],
         )
 
