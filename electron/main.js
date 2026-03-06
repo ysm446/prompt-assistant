@@ -45,8 +45,8 @@ function waitForServer(retries = 60) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
+    width: 1600,
+    height: 1200,
     minWidth: 900,
     minHeight: 600,
     title: 'Prompt Assistant',

@@ -24,12 +24,17 @@
           <input type="file" id="image-file-input" accept="image/*" style="display:none">
         </div>
         <div class="status-box" id="image-status"></div>
+        <div class="field-row">
+          <input type="text" id="image-save-path" class="text-input" value="./outputs/images" placeholder="保存先フォルダ" style="flex:1">
+          <button class="btn btn-icon" id="open-image-path-btn" title="フォルダを開く">📁</button>
+        </div>
+        <div id="image-file-path" class="status-small" style="word-break:break-all"></div>
       </div>
 
       <!-- 中: プロンプト + パラメータ -->
       <div class="col">
         <label class="field-label">Positive Prompt</label>
-        <textarea id="positive-prompt" class="textarea" rows="6"
+        <textarea id="positive-prompt" class="textarea" rows="10"
           placeholder="例: 1girl, sunset, orange sky, dramatic lighting, ..."></textarea>
 
         <label class="field-label">Negative Prompt</label>
@@ -66,7 +71,10 @@
             <!-- ComfyUI workflow (ComfyUI のみ表示) -->
             <div id="comfyui-params" style="display:none">
               <label class="field-label">ComfyUI ワークフロー</label>
-              <select id="comfyui-workflow" class="select"></select>
+              <div class="field-row">
+                <select id="comfyui-workflow" class="select" style="flex:1"></select>
+                <button class="btn btn-icon" id="open-image-workflow-folder-btn" title="ワークフローフォルダを開く">📁</button>
+              </div>
 
               <div class="slider-row">
                 <label>Width</label>
@@ -119,12 +127,6 @@
               </div>
             </div>
 
-            <label class="checkbox-label">
-              <input type="checkbox" id="save-generated-image">
-              画像を保存する
-            </label>
-            <input type="text" id="image-save-path" class="text-input" value="./outputs/images"
-              placeholder="保存先パス" disabled>
           </div>
         </details>
       </div>
@@ -171,6 +173,11 @@
           <div id="video-placeholder" class="placeholder-text">生成動画がここに表示されます</div>
         </div>
         <div class="status-box" id="video-status"></div>
+        <div class="field-row">
+          <input type="text" id="video-save-path" class="text-input" value="./outputs/videos" placeholder="保存先フォルダ" style="flex:1">
+          <button class="btn btn-icon" id="open-video-path-btn" title="フォルダを開く">📁</button>
+        </div>
+        <div id="video-file-path" class="status-small" style="word-break:break-all"></div>
       </div>
 
       <!-- 中: 動画プロンプト + 生成/停止 + VRAM -->
@@ -182,6 +189,11 @@
         <div class="btn-row">
           <button id="generate-video-btn" class="btn btn-primary">動画生成</button>
           <button id="stop-video-btn" class="btn btn-secondary">停止</button>
+        </div>
+
+        <div class="btn-row">
+          <button id="save-json-btn" class="btn btn-secondary" style="flex:1">JSON保存</button>
+          <div id="save-json-status" class="status-small" style="flex:2; display:flex; align-items:center; padding:0 6px;"></div>
         </div>
 
         <!-- VRAM accordion -->
@@ -205,7 +217,10 @@
           <summary>動画生成パラメータ</summary>
           <div class="accordion-body">
             <label class="field-label">動画ワークフロー</label>
-            <select id="video-workflow" class="select"></select>
+            <div class="field-row">
+              <select id="video-workflow" class="select" style="flex:1"></select>
+              <button class="btn btn-icon" id="open-video-workflow-folder-btn" title="ワークフローフォルダを開く">📁</button>
+            </div>
 
             <div class="slider-row">
               <label>Width</label>
@@ -227,12 +242,6 @@
               <input type="number" id="video-seed" class="number-input" value="-1">
             </div>
 
-            <label class="checkbox-label">
-              <input type="checkbox" id="save-generated-video">
-              動画を保存する
-            </label>
-            <input type="text" id="video-save-path" class="text-input" value="./outputs/videos"
-              placeholder="保存先パス" disabled>
           </div>
         </details>
       </div>
@@ -255,18 +264,6 @@
         <button id="generate-video-prompt-btn" class="btn btn-primary" style="margin-top:8px; flex:none">
           動画プロンプト生成
         </button>
-
-        <!-- テキスト保存 accordion -->
-        <details class="accordion" style="margin-top:8px">
-          <summary>テキスト保存</summary>
-          <div class="accordion-body">
-            <label class="field-label">保存先フォルダ</label>
-            <input type="text" id="text-save-folder" class="text-input" value="./outputs/text"
-              placeholder="保存先フォルダのパスを入力...">
-            <button id="save-text-btn" class="btn btn-secondary" style="margin-top:4px">テキスト保存</button>
-            <div id="save-text-status" class="status-small"></div>
-          </div>
-        </details>
       </div>
 
     </div><!-- /three-col -->

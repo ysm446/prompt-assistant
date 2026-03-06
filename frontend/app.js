@@ -146,12 +146,10 @@ function getSettings() {
     comfyui_height: parseInt(document.getElementById('comfyui-height').value),
     comfyui_seed: parseInt(document.getElementById('comfyui-seed').value) || -1,
     generate_count: parseInt(document.getElementById('generate-count').value) || 1,
-    save_generated_image: document.getElementById('save-generated-image').checked,
     image_save_path: document.getElementById('image-save-path').value,
-    save_generated_video: document.getElementById('save-generated-video').checked,
     video_save_path: document.getElementById('video-save-path').value,
+    unload_llm_before_video: document.getElementById('unload-llm-before-video').checked,
     video_workflow: document.getElementById('video-workflow').value,
-    text_save_path: document.getElementById('text-save-folder').value,
     video_sections: sections,
     video_width: parseInt(document.getElementById('video-width').value),
     video_height: parseInt(document.getElementById('video-height').value),
@@ -173,7 +171,7 @@ function scheduleSave() {
 // 変更イベントで自動保存をスケジュール
 ['positive-prompt', 'negative-prompt', 'generate-count',
   'seed-input', 'comfyui-seed', 'video-seed',
-  'image-save-path', 'video-save-path', 'text-save-folder',
+  'image-save-path', 'video-save-path',
   'model-dropdown', 'sampler-dropdown', 'comfyui-workflow', 'video-workflow',
 ].forEach(id => {
   const el = document.getElementById(id);
@@ -184,15 +182,7 @@ document.querySelectorAll('input[name="video-section"]').forEach(cb => {
   cb.addEventListener('change', scheduleSave);
 });
 
-document.getElementById('save-generated-image').addEventListener('change', e => {
-  document.getElementById('image-save-path').disabled = !e.target.checked;
-  scheduleSave();
-});
-
-document.getElementById('save-generated-video').addEventListener('change', e => {
-  document.getElementById('video-save-path').disabled = !e.target.checked;
-  scheduleSave();
-});
+document.getElementById('unload-llm-before-video').addEventListener('change', scheduleSave);
 
 async function loadSettings() {
   const s = await fetch('/api/settings').then(r => r.json());
@@ -242,10 +232,8 @@ async function loadSettings() {
   // Count
   document.getElementById('generate-count').value = s.generate_count ?? 1;
 
-  // Save image
-  document.getElementById('save-generated-image').checked = !!s.save_generated_image;
+  // Save image path
   document.getElementById('image-save-path').value = s.image_save_path || './outputs/images';
-  document.getElementById('image-save-path').disabled = !s.save_generated_image;
 
   // Video workflow
   const vwfDd = document.getElementById('video-workflow');
@@ -260,13 +248,11 @@ async function loadSettings() {
   document.getElementById('video-height-val').textContent = s.video_height ?? 480;
   document.getElementById('video-seed').value = s.video_seed ?? -1;
 
-  // Save video
-  document.getElementById('save-generated-video').checked = !!s.save_generated_video;
+  // Save video path
   document.getElementById('video-save-path').value = s.video_save_path || './outputs/videos';
-  document.getElementById('video-save-path').disabled = !s.save_generated_video;
 
-  // Text save
-  document.getElementById('text-save-folder').value = s.text_save_path || './outputs/text';
+  // Unload LLM before video
+  document.getElementById('unload-llm-before-video').checked = !!s.unload_llm_before_video;
 
   // Video sections
   if (Array.isArray(s.video_sections)) {
@@ -372,11 +358,16 @@ async function uploadImage(file) {
   imageStatus.textContent = 'アップロード中...';
   const formData = new FormData();
   formData.append('file', file);
+  const filePath = window.electronAPI?.getPathForFile?.(file) || '';
+  if (filePath) formData.append('image_path', filePath);
   try {
     const resp = await fetch('/api/image/upload', { method: 'POST', body: formData });
     const data = await resp.json();
     showImage(data.image);
     imageStatus.textContent = data.status;
+    if (filePath) {
+      document.getElementById('image-file-path').textContent = filePath;
+    }
     if (data.meta) {
       applyMetadata(data.meta);
     }
@@ -472,7 +463,6 @@ async function generateImage() {
     comfyui_height: parseInt(document.getElementById('comfyui-height').value),
     comfyui_seed: parseInt(document.getElementById('comfyui-seed').value) || -1,
     count: parseInt(document.getElementById('generate-count').value) || 1,
-    save_generated_image: document.getElementById('save-generated-image').checked,
     image_save_path: document.getElementById('image-save-path').value,
   };
 
@@ -483,6 +473,9 @@ async function generateImage() {
       } else if (data.type === 'image') {
         showImage(data.image);
         imageStatus.textContent = data.status;
+        if (data.saved_path) {
+          document.getElementById('image-file-path').textContent = data.saved_path;
+        }
       } else if (data.type === 'error') {
         imageStatus.textContent = data.content;
       }
@@ -697,7 +690,6 @@ async function generateVideo() {
       seed: parseInt(document.getElementById('video-seed').value) || -1,
       width: parseInt(document.getElementById('video-width').value),
       height: parseInt(document.getElementById('video-height').value),
-      save_generated_video: document.getElementById('save-generated-video').checked,
       video_save_path: document.getElementById('video-save-path').value,
       unload_llm_before_video: document.getElementById('unload-llm-before-video').checked,
     }, data => {
@@ -708,6 +700,9 @@ async function generateVideo() {
         videoDisplay.style.display = 'block';
         videoPlaceholder.style.display = 'none';
         videoStatus.textContent = data.status;
+        if (data.saved_path) {
+          document.getElementById('video-file-path').textContent = data.saved_path;
+        }
       } else if (data.type === 'error') {
         videoStatus.textContent = data.content;
       }
@@ -749,21 +744,57 @@ document.getElementById('video-res-1280').addEventListener('click', () => {
 });
 
 // ---------------------------------------------------------------------------
-// テキスト保存
+// パス表示のフォルダアイコン
 // ---------------------------------------------------------------------------
 
-document.getElementById('save-text-btn').addEventListener('click', async () => {
-  const resp = await fetch('/api/save_text', {
+document.getElementById('open-image-path-btn').addEventListener('click', () => {
+  const p = document.getElementById('image-file-path').textContent
+    || document.getElementById('image-save-path').value;
+  if (p) fetch('/api/open_path', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: p }) });
+});
+
+document.getElementById('open-video-path-btn').addEventListener('click', () => {
+  const p = document.getElementById('video-file-path').textContent
+    || document.getElementById('video-save-path').value;
+  if (p) fetch('/api/open_path', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: p }) });
+});
+
+// ---------------------------------------------------------------------------
+// ワークフローフォルダを開く
+// ---------------------------------------------------------------------------
+
+document.getElementById('open-image-workflow-folder-btn').addEventListener('click', () => {
+  fetch('/api/open_workflow_folder', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind: 'image' }),
+  });
+});
+
+document.getElementById('open-video-workflow-folder-btn').addEventListener('click', () => {
+  fetch('/api/open_workflow_folder', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind: 'video' }),
+  });
+});
+
+// ---------------------------------------------------------------------------
+// JSON保存
+// ---------------------------------------------------------------------------
+
+document.getElementById('save-json-btn').addEventListener('click', async () => {
+  const statusEl = document.getElementById('save-json-status');
+  statusEl.textContent = '保存中...';
+  const resp = await fetch('/api/save_json', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      folder: document.getElementById('text-save-folder').value,
-      positive: document.getElementById('positive-prompt').value,
-      extra_instruction: document.getElementById('video-extra-instruction').value,
       video_prompt: document.getElementById('video-prompt').value,
+      additional_instruction: document.getElementById('video-extra-instruction').value,
     }),
   }).then(r => r.json());
-  document.getElementById('save-text-status').textContent = resp.message;
+  statusEl.textContent = resp.message;
 });
 
 // ---------------------------------------------------------------------------

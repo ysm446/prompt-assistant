@@ -18,6 +18,8 @@
   --success: #4caf50;
   --radius: 6px;
   --gap: 10px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
+  --shadow: 0 2px 8px rgba(0,0,0,0.5);
 }
 
 * {
@@ -96,6 +98,7 @@ html, body {
   justify-content: center;
   transition: border-color 0.2s;
   flex-shrink: 0;
+  box-shadow: var(--shadow);
 }
 
 .image-drop-area:hover,
@@ -128,6 +131,7 @@ html, body {
   justify-content: center;
   overflow: hidden;
   flex-shrink: 0;
+  box-shadow: var(--shadow);
 }
 
 /* ---- Status boxes ---- */
@@ -140,6 +144,7 @@ html, body {
   font-size: 12px;
   min-height: 32px;
   word-break: break-all;
+  box-shadow: var(--shadow-sm);
 }
 
 .status-small {
@@ -170,6 +175,7 @@ html, body {
   resize: vertical;
   outline: none;
   transition: border-color 0.15s;
+  box-shadow: var(--shadow-sm);
 }
 
 .textarea:focus {
@@ -237,6 +243,7 @@ html, body {
   font-family: inherit;
   font-weight: 500;
   transition: background 0.15s, opacity 0.15s;
+  box-shadow: var(--shadow-sm);
 }
 
 .btn:disabled {
@@ -349,6 +356,7 @@ html, body {
   border-radius: var(--radius);
   background: var(--surface);
   overflow: hidden;
+  box-shadow: var(--shadow-sm);
 }
 
 .accordion > summary {
@@ -395,6 +403,7 @@ html, body {
   flex-direction: column;
   gap: 10px;
   scroll-behavior: smooth;
+  box-shadow: var(--shadow);
 }
 
 .chat-message {

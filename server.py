@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -69,6 +69,7 @@ _state: dict[str, Any] = {
     "conversation_history": [],
     "current_image": None,        # PIL Image
     "current_image_stem": "",
+    "current_image_path": "",     # 元ファイルの絶対パス
 }
 _video_gen_id = 0
 
@@ -216,15 +217,57 @@ def get_video_workflows():
     return {"workflows": list(comfyui_client.VIDEO_WORKFLOW_PRESETS.keys())}
 
 
+@app.post("/api/open_path")
+async def open_path(request: Request):
+    body = await request.json()
+    target = (body.get("path", "") or "").strip()
+    if not target:
+        return {"ok": False, "message": "パスが指定されていません"}
+    # ファイルパスの場合は親フォルダを開く
+    p = Path(target)
+    folder = str(p.parent) if p.is_file() else str(p)
+    os.makedirs(folder, exist_ok=True)
+    try:
+        if os.name == "nt":
+            os.startfile(folder)
+        else:
+            import subprocess
+            subprocess.Popen(["xdg-open", folder])
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "message": str(e)}
+
+
+@app.post("/api/open_workflow_folder")
+async def open_workflow_folder(request: Request):
+    body = await request.json()
+    kind = body.get("kind", "image")
+    if kind == "video":
+        folder = comfyui_client._VIDEO_WORKFLOWS_DIR
+    else:
+        folder = comfyui_client._IMAGE_WORKFLOWS_DIR
+    os.makedirs(folder, exist_ok=True)
+    try:
+        if os.name == "nt":
+            os.startfile(folder)
+        else:
+            import subprocess
+            subprocess.Popen(["xdg-open", folder])
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "message": str(e)}
+
+
 # ---------------------------------------------------------------------------
 # Routes - Image
 # ---------------------------------------------------------------------------
 
 @app.post("/api/image/upload")
-async def upload_image(file: UploadFile = File(...)):
+async def upload_image(file: UploadFile = File(...), image_path: str = Form("")):
     raw = await file.read()
     image = Image.open(io.BytesIO(raw)).copy()
     _state["current_image"] = image
+    _state["current_image_path"] = image_path
     b64 = _image_to_b64(image)
     meta = read_a1111_metadata(image) or read_comfyui_metadata(image)
     if meta is None:
@@ -279,7 +322,6 @@ async def generate_image_stream(request: Request):
     comfyui_height = int(body.get("comfyui_height", 1024))
     comfyui_seed = int(body.get("comfyui_seed", -1))
     count = max(1, int(body.get("count", 1)))
-    save_enabled = bool(body.get("save_generated_image", False))
     save_dir = (body.get("image_save_path", "") or "").strip() or "./outputs/images"
 
     _state["positive_prompt"] = positive
@@ -329,23 +371,26 @@ async def generate_image_stream(request: Request):
                     else time.strftime("forge_%Y%m%d_%H%M%S")
                 )
 
+                saved_path = ""
                 save_status = ""
-                if save_enabled:
-                    try:
-                        os.makedirs(save_dir, exist_ok=True)
-                        meta = read_a1111_metadata(image) or read_comfyui_metadata(image) or {}
-                        sv = int(meta.get("seed", cseed_i if backend == "ComfyUI" else seed_i) or 0)
-                        fname = f"{_get_next_seq(save_dir, ('.png',)):05d}-{sv}.png"
-                        sp = os.path.join(save_dir, fname)
-                        pnginfo = _build_pnginfo(image)
-                        image.save(sp, pnginfo=pnginfo) if pnginfo else image.save(sp)
-                        save_status = f" / 保存: {sp}"
-                    except Exception as se:
-                        save_status = f" / 保存失敗: {se}"
+                try:
+                    os.makedirs(save_dir, exist_ok=True)
+                    meta = read_a1111_metadata(image) or read_comfyui_metadata(image) or {}
+                    sv = int(meta.get("seed", cseed_i if backend == "ComfyUI" else seed_i) or 0)
+                    fname = f"{_get_next_seq(save_dir, ('.png',)):05d}-{sv}.png"
+                    sp = os.path.join(save_dir, fname)
+                    sp = os.path.abspath(sp)
+                    pnginfo = _build_pnginfo(image)
+                    image.save(sp, pnginfo=pnginfo) if pnginfo else image.save(sp)
+                    saved_path = sp
+                    _state["current_image_path"] = sp
+                except Exception as se:
+                    save_status = f" / 保存失敗: {se}"
 
                 yield _sse({
                     "type": "image",
                     "image": _image_to_b64(image),
+                    "saved_path": saved_path,
                     "status": f"画像を生成しました。{suffix}（{elapsed:.1f}秒）{save_status}",
                 })
             except Exception as e:
@@ -552,7 +597,6 @@ async def generate_video_stream(request: Request):
     seed = int(body.get("seed", -1))
     width = int(body.get("width", 848)) if body.get("width") else None
     height = int(body.get("height", 480)) if body.get("height") else None
-    save_enabled = bool(body.get("save_generated_video", False))
     save_dir = (body.get("video_save_path", "") or "").strip() or "./outputs/videos"
     unload_llm = bool(body.get("unload_llm_before_video", False))
 
@@ -607,28 +651,30 @@ async def generate_video_stream(request: Request):
         elif result_box:
             result = result_box[0]
             if isinstance(result, str):
+                saved_path = ""
                 save_status = ""
-                if save_enabled:
-                    try:
-                        os.makedirs(save_dir, exist_ok=True)
-                        ext = os.path.splitext(result)[1].lower() or ".mp4"
-                        if ext not in {".mp4", ".webm", ".avi", ".mov"}:
-                            ext = ".mp4"
-                        used_seed = comfyui_client.get_last_actual_seed()
-                        fname = (
-                            f"{_get_next_seq(save_dir, ('.mp4', '.webm', '.avi', '.mov')):05d}"
-                            f"-{int(used_seed)}{ext}"
-                        )
-                        sp = os.path.join(save_dir, fname)
-                        shutil.copy2(result, sp)
-                        save_status = f" / 保存: {sp}"
-                    except Exception as se:
-                        save_status = f" / 保存失敗: {se}"
+                try:
+                    os.makedirs(save_dir, exist_ok=True)
+                    ext = os.path.splitext(result)[1].lower() or ".mp4"
+                    if ext not in {".mp4", ".webm", ".avi", ".mov"}:
+                        ext = ".mp4"
+                    used_seed = comfyui_client.get_last_actual_seed()
+                    fname = (
+                        f"{_get_next_seq(save_dir, ('.mp4', '.webm', '.avi', '.mov')):05d}"
+                        f"-{int(used_seed)}{ext}"
+                    )
+                    sp = os.path.join(save_dir, fname)
+                    sp = os.path.abspath(sp)
+                    shutil.copy2(result, sp)
+                    saved_path = sp
+                except Exception as se:
+                    save_status = f" / 保存失敗: {se}"
                 token = str(uuid.uuid4())
                 _temp_files[token] = result
                 yield _sse({
                     "type": "video",
                     "url": f"/api/file/{token}",
+                    "saved_path": saved_path,
                     "status": f"動画生成完了（{elapsed:.0f}秒）{save_status}",
                 })
             else:
@@ -654,33 +700,49 @@ def shutdown():
 
 
 # ---------------------------------------------------------------------------
-# Routes - Save text
+# Routes - Save JSON
 # ---------------------------------------------------------------------------
 
-@app.post("/api/save_text")
-async def save_text(request: Request):
+@app.post("/api/save_json")
+async def save_json_endpoint(request: Request):
     body = await request.json()
-    folder = (body.get("folder", "") or "").strip() or "."
-    positive = body.get("positive", "")
-    extra_instruction = body.get("extra_instruction", "")
     video_prompt = body.get("video_prompt", "")
-    stem = _state.get("current_image_stem", "") or time.strftime("prompt_%Y%m%d_%H%M%S")
+    additional_instruction = body.get("additional_instruction", "")
 
-    try:
-        os.makedirs(folder, exist_ok=True)
-    except Exception as e:
-        return {"ok": False, "message": f"フォルダ作成失敗: {e}"}
+    image_path = _state.get("current_image_path", "")
+    if not image_path:
+        return {"ok": False, "message": "画像が読み込まれていません"}
 
-    filepath = os.path.join(folder, stem + ".txt")
-    content = "\n".join([
-        "=== Positive Prompt ===", positive, "",
-        "=== 追加指示 ===", extra_instruction, "",
-        "=== 動画プロンプト ===", video_prompt,
-    ])
+    image = _state.get("current_image")
+    meta_raw = {}
+    if image:
+        meta_raw = read_a1111_metadata(image) or read_comfyui_metadata(image) or {}
+
+    p = Path(image_path)
+    size_list = list(image.size) if image else []
+    _exclude = {"positive", "negative", "width", "height"}
+    settings = {k: v for k, v in meta_raw.items() if k not in _exclude}
+
+    data = {
+        "image_filename": p.name,
+        "image_path": str(p),
+        "metadata": {
+            "path": str(p),
+            "filename": p.name,
+            "size": size_list,
+            "prompt": meta_raw.get("positive", ""),
+            "negative_prompt": meta_raw.get("negative", ""),
+            "settings": settings,
+        },
+        "prompt": video_prompt,
+        "additional_instruction": additional_instruction,
+    }
+
+    json_path = p.parent / (p.stem + ".json")
     try:
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(content)
-        return {"ok": True, "message": f"保存しました: {filepath}"}
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return {"ok": True, "message": f"保存しました: {json_path}"}
     except Exception as e:
         return {"ok": False, "message": f"保存エラー: {e}"}
 
