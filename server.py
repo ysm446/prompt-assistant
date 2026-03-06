@@ -321,49 +321,45 @@ async def generate_image_stream(request: Request):
     comfyui_width = int(body.get("comfyui_width", 1024))
     comfyui_height = int(body.get("comfyui_height", 1024))
     comfyui_seed = int(body.get("comfyui_seed", -1))
-    count = max(1, int(body.get("count", 1)))
     save_dir = (body.get("image_save_path", "") or "").strip() or "./outputs/images"
 
     _state["positive_prompt"] = positive
     _state["negative_prompt"] = negative
 
     async def event_gen():
-        for i in range(1, count + 1):
-            seed_i = (seed + (i - 1)) if seed != -1 else -1
-            cseed_i = (comfyui_seed + (i - 1)) if comfyui_seed != -1 else -1
-            suffix = f"（{i}/{count}枚）" if count > 1 else ""
-            yield _sse({"type": "status", "content": f"生成中...{suffix}"})
-            try:
-                start = time.time()
-                if backend == "ComfyUI":
-                    wf_path = comfyui_client.IMAGE_WORKFLOW_PRESETS.get(comfyui_workflow, comfyui_workflow)
-                    image = await _run_in_thread(
-                        comfyui_client.generate_image,
-                        workflow_path=wf_path,
-                        positive=positive,
-                        negative=negative,
-                        seed=cseed_i,
-                        width=comfyui_width,
-                        height=comfyui_height,
-                    )
-                else:
-                    image = await _run_in_thread(
-                        a1111_client.generate_image,
-                        positive=positive,
-                        negative=negative,
-                        steps=steps,
-                        cfg=cfg,
-                        sampler=sampler,
-                        width=width,
-                        height=height,
-                        seed=seed_i,
-                    )
-                elapsed = time.time() - start
+        seed_i = seed
+        cseed_i = comfyui_seed
+        yield _sse({"type": "status", "content": "生成中..."})
+        try:
+            start = time.time()
+            if backend == "ComfyUI":
+                wf_path = comfyui_client.IMAGE_WORKFLOW_PRESETS.get(comfyui_workflow, comfyui_workflow)
+                image = await _run_in_thread(
+                    comfyui_client.generate_image,
+                    workflow_path=wf_path,
+                    positive=positive,
+                    negative=negative,
+                    seed=cseed_i,
+                    width=comfyui_width,
+                    height=comfyui_height,
+                )
+            else:
+                image = await _run_in_thread(
+                    a1111_client.generate_image,
+                    positive=positive,
+                    negative=negative,
+                    steps=steps,
+                    cfg=cfg,
+                    sampler=sampler,
+                    width=width,
+                    height=height,
+                    seed=seed_i,
+                )
+            elapsed = time.time() - start
 
-                if not isinstance(image, Image.Image):
-                    yield _sse({"type": "error", "content": "画像の取得に失敗しました"})
-                    break
-
+            if not isinstance(image, Image.Image):
+                yield _sse({"type": "error", "content": "画像の取得に失敗しました"})
+            else:
                 _state["current_image"] = image
                 _state["current_image_stem"] = (
                     comfyui_client.get_last_output_filename()
@@ -391,11 +387,10 @@ async def generate_image_stream(request: Request):
                     "type": "image",
                     "image": _image_to_b64(image),
                     "saved_path": saved_path,
-                    "status": f"画像を生成しました。{suffix}（{elapsed:.1f}秒）{save_status}",
+                    "status": f"画像を生成しました。（{elapsed:.1f}秒）{save_status}",
                 })
-            except Exception as e:
-                yield _sse({"type": "error", "content": f"画像生成エラー: {e}"})
-                break
+        except Exception as e:
+            yield _sse({"type": "error", "content": f"画像生成エラー: {e}"})
 
         yield _sse({"type": "done"})
 

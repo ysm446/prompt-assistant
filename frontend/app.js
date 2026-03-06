@@ -158,7 +158,6 @@ function getSettings() {
     comfyui_width: parseInt(document.getElementById('comfyui-width').value),
     comfyui_height: parseInt(document.getElementById('comfyui-height').value),
     comfyui_seed: parseInt(document.getElementById('comfyui-seed').value) || -1,
-    generate_count: parseInt(document.getElementById('generate-count').value) || 1,
     image_save_path: document.getElementById('image-save-path').value,
     video_save_path: document.getElementById('video-save-path').value,
     unload_llm_before_video: document.getElementById('unload-llm-before-video').checked,
@@ -182,7 +181,7 @@ function scheduleSave() {
 }
 
 // 変更イベントで自動保存をスケジュール
-['positive-prompt', 'negative-prompt', 'generate-count',
+['positive-prompt', 'negative-prompt',
   'seed-input', 'comfyui-seed', 'video-seed',
   'image-save-path', 'video-save-path',
   'model-dropdown', 'sampler-dropdown', 'comfyui-workflow', 'video-workflow',
@@ -241,9 +240,6 @@ async function loadSettings() {
   const radioEl = document.querySelector(`input[name="backend"][value="${backendVal}"]`);
   if (radioEl) radioEl.checked = true;
   updateBackendVisibility();
-
-  // Count
-  document.getElementById('generate-count').value = s.generate_count ?? 1;
 
   // Save image path
   document.getElementById('image-save-path').value = s.image_save_path || './outputs/images';
@@ -554,7 +550,6 @@ document.getElementById('generate-btn').addEventListener('click', () => {
     comfyui_width: parseInt(document.getElementById('comfyui-width').value),
     comfyui_height: parseInt(document.getElementById('comfyui-height').value),
     comfyui_seed: parseInt(document.getElementById('comfyui-seed').value) || -1,
-    count: parseInt(document.getElementById('generate-count').value) || 1,
     image_save_path: document.getElementById('image-save-path').value,
   }});
   if (!genProcessing) processNextJob();
