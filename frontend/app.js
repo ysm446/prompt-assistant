@@ -442,6 +442,25 @@ document.getElementById('seed-from-image-btn').addEventListener('click',
 document.getElementById('comfyui-seed-from-image-btn').addEventListener('click',
   () => seedFromImage('comfyui-seed'));
 
+document.getElementById('video-seed-random-btn').addEventListener('click', () => {
+  document.getElementById('video-seed').value = -1;
+  scheduleSave();
+});
+
+async function seedFromVideo() {
+  const resp = await fetch('/api/seed_from_video', { method: 'POST' }).then(r => r.json());
+  const videoStatus = document.getElementById('video-status');
+  if (resp.ok) {
+    document.getElementById('video-seed').value = resp.seed;
+    if (videoStatus) videoStatus.textContent = resp.message;
+    scheduleSave();
+  } else {
+    if (videoStatus) videoStatus.textContent = resp.message;
+  }
+}
+
+document.getElementById('video-seed-from-video-btn').addEventListener('click', seedFromVideo);
+
 // ---------------------------------------------------------------------------
 // 統合生成キュー（画像・動画共通）
 // ---------------------------------------------------------------------------

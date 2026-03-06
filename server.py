@@ -70,6 +70,7 @@ _state: dict[str, Any] = {
     "current_image": None,        # PIL Image
     "current_image_stem": "",
     "current_image_path": "",     # 元ファイルの絶対パス
+    "current_video_path": "",     # 直近の動画ファイルの絶対パス
 }
 _video_gen_id = 0
 
@@ -303,6 +304,20 @@ def seed_from_image():
         return {"ok": False, "message": "メタデータに Seed がありません"}
     seed = int(meta["seed"])
     return {"ok": True, "seed": seed, "message": f"Seed を反映しました: {seed}"}
+
+
+@app.post("/api/seed_from_video")
+def seed_from_video():
+    video_path = _state.get("current_video_path", "")
+    if not video_path:
+        return {"ok": False, "message": "現在の動画がありません"}
+    # ファイル名から seed を抽出（例: 00001-1234567890.mp4）
+    stem = os.path.splitext(os.path.basename(video_path))[0]
+    parts = stem.split("-", 1)
+    if len(parts) == 2 and parts[1].lstrip("-").isdigit():
+        seed = int(parts[1])
+        return {"ok": True, "seed": seed, "message": f"Seed を反映しました: {seed}"}
+    return {"ok": False, "message": "ファイル名から Seed を読み取れませんでした"}
 
 
 @app.post("/api/generate_image/stream")
@@ -662,6 +677,7 @@ async def generate_video_stream(request: Request):
                     sp = os.path.abspath(sp)
                     shutil.copy2(result, sp)
                     saved_path = sp
+                    _state["current_video_path"] = sp
                 except Exception as se:
                     save_status = f" / 保存失敗: {se}"
                 token = str(uuid.uuid4())
