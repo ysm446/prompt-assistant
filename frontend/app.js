@@ -5,6 +5,21 @@
 // =========================================================
 
 // ---------------------------------------------------------------------------
+// コピーボタン
+// ---------------------------------------------------------------------------
+
+document.querySelectorAll('.btn-copy').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const target = document.getElementById(btn.dataset.target);
+    if (!target) return;
+    navigator.clipboard.writeText(target.value).then(() => {
+      btn.classList.add('copied');
+      setTimeout(() => btn.classList.remove('copied'), 1500);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // SSE ストリーミング ユーティリティ
 // ---------------------------------------------------------------------------
 
@@ -57,8 +72,6 @@ async function fetchSSE(url, body, onEvent, signal) {
 // 状態
 // ---------------------------------------------------------------------------
 
-let imageAbortCtrl = null;
-let videoAbortCtrl = null;
 let chatAbortCtrl = null;
 let videoPromptAbortCtrl = null;
 
@@ -434,21 +447,100 @@ document.getElementById('comfyui-seed-from-image-btn').addEventListener('click',
   () => seedFromImage('comfyui-seed'));
 
 // ---------------------------------------------------------------------------
+// 統合生成キュー（画像・動画共通）
+// ---------------------------------------------------------------------------
+
+let genQueue = [];       // { type: 'image'|'video', params: {} }
+let genProcessing = false;
+let genAbortCtrl = null;
+
+function getQueueLabel() {
+  const n = genQueue.length;
+  return n > 0 ? `（キュー: ${n}件）` : '';
+}
+
+function setImageBusy(busy) {
+  document.getElementById('generate-btn').disabled = false; // 常に押せる
+  document.getElementById('stop-btn').disabled = !busy;
+}
+
+function setVideoBusy(busy) {
+  document.getElementById('generate-video-btn').disabled = false;
+  document.getElementById('stop-video-btn').disabled = !busy;
+}
+
+async function processNextJob() {
+  if (genQueue.length === 0) {
+    genProcessing = false;
+    setImageBusy(false);
+    setVideoBusy(false);
+    return;
+  }
+
+  genProcessing = true;
+  genAbortCtrl = new AbortController();
+  const job = genQueue.shift();
+
+  if (job.type === 'image') {
+    setImageBusy(true);
+    setVideoBusy(genQueue.length > 0);
+    try {
+      await fetchSSE('/api/generate_image/stream', job.params, data => {
+        const q = getQueueLabel();
+        if (data.type === 'status') {
+          imageStatus.textContent = data.content + q;
+        } else if (data.type === 'image') {
+          showImage(data.image);
+          imageStatus.textContent = data.status + q;
+          if (data.saved_path) document.getElementById('image-file-path').textContent = data.saved_path;
+        } else if (data.type === 'error') {
+          imageStatus.textContent = data.content + q;
+        }
+      }, genAbortCtrl.signal);
+    } catch (e) { /* abort */ }
+
+  } else if (job.type === 'video') {
+    setVideoBusy(true);
+    setImageBusy(genQueue.length > 0);
+    try {
+      await fetchSSE('/api/generate_video/stream', job.params, data => {
+        const q = getQueueLabel();
+        if (data.type === 'status') {
+          videoStatus.textContent = data.content + q;
+        } else if (data.type === 'video') {
+          videoDisplay.src = data.url;
+          videoDisplay.style.display = 'block';
+          videoPlaceholder.style.display = 'none';
+          videoStatus.textContent = data.status + q;
+          if (data.saved_path) document.getElementById('video-file-path').textContent = data.saved_path;
+        } else if (data.type === 'error') {
+          videoStatus.textContent = data.content + q;
+        }
+      }, genAbortCtrl.signal);
+    } catch (e) { /* abort */ }
+  }
+
+  genAbortCtrl = null;
+  processNextJob();
+}
+
+function stopAllGeneration() {
+  genQueue = [];
+  if (genAbortCtrl) genAbortCtrl.abort();
+  fetch('/api/interrupt_image', { method: 'POST' });
+  fetch('/api/stop_video', { method: 'POST' });
+  genProcessing = false;
+  setImageBusy(false);
+  setVideoBusy(false);
+}
+
+// ---------------------------------------------------------------------------
 // 画像生成
 // ---------------------------------------------------------------------------
 
-document.getElementById('generate-btn').addEventListener('click', generateImage);
-document.getElementById('stop-btn').addEventListener('click', stopImageGeneration);
-
-async function generateImage() {
-  if (imageAbortCtrl) imageAbortCtrl.abort();
-  imageAbortCtrl = new AbortController();
-
-  document.getElementById('generate-btn').disabled = true;
-  document.getElementById('stop-btn').disabled = false;
-
+document.getElementById('generate-btn').addEventListener('click', () => {
   const backend = document.querySelector('input[name="backend"]:checked')?.value;
-  const body = {
+  genQueue.push({ type: 'image', params: {
     positive: document.getElementById('positive-prompt').value,
     negative: document.getElementById('negative-prompt').value,
     steps: parseInt(document.getElementById('steps-slider').value),
@@ -464,36 +556,15 @@ async function generateImage() {
     comfyui_seed: parseInt(document.getElementById('comfyui-seed').value) || -1,
     count: parseInt(document.getElementById('generate-count').value) || 1,
     image_save_path: document.getElementById('image-save-path').value,
-  };
+  }});
+  if (!genProcessing) processNextJob();
+  else imageStatus.textContent = `待機中...${getQueueLabel()}`;
+});
 
-  try {
-    await fetchSSE('/api/generate_image/stream', body, data => {
-      if (data.type === 'status') {
-        imageStatus.textContent = data.content;
-      } else if (data.type === 'image') {
-        showImage(data.image);
-        imageStatus.textContent = data.status;
-        if (data.saved_path) {
-          document.getElementById('image-file-path').textContent = data.saved_path;
-        }
-      } else if (data.type === 'error') {
-        imageStatus.textContent = data.content;
-      }
-    }, imageAbortCtrl.signal);
-  } finally {
-    document.getElementById('generate-btn').disabled = false;
-    document.getElementById('stop-btn').disabled = true;
-    imageAbortCtrl = null;
-  }
-}
-
-function stopImageGeneration() {
-  if (imageAbortCtrl) imageAbortCtrl.abort();
-  fetch('/api/interrupt_image', { method: 'POST' });
+document.getElementById('stop-btn').addEventListener('click', () => {
+  stopAllGeneration();
   imageStatus.textContent = '停止しました';
-  document.getElementById('generate-btn').disabled = false;
-  document.getElementById('stop-btn').disabled = true;
-}
+});
 
 // ---------------------------------------------------------------------------
 // チャット
@@ -673,55 +744,25 @@ const videoDisplay = document.getElementById('video-display');
 const videoPlaceholder = document.getElementById('video-placeholder');
 const videoStatus = document.getElementById('video-status');
 
-document.getElementById('generate-video-btn').addEventListener('click', generateVideo);
-document.getElementById('stop-video-btn').addEventListener('click', stopVideo);
+document.getElementById('generate-video-btn').addEventListener('click', () => {
+  genQueue.push({ type: 'video', params: {
+    video_prompt: document.getElementById('video-prompt').value,
+    workflow: document.getElementById('video-workflow').value,
+    seed: parseInt(document.getElementById('video-seed').value) || -1,
+    width: parseInt(document.getElementById('video-width').value),
+    height: parseInt(document.getElementById('video-height').value),
+    video_save_path: document.getElementById('video-save-path').value,
+    unload_llm_before_video: document.getElementById('unload-llm-before-video').checked,
+  }});
+  if (!genProcessing) processNextJob();
+  else videoStatus.textContent = `待機中...${getQueueLabel()}`;
+});
 
-async function generateVideo() {
-  if (videoAbortCtrl) videoAbortCtrl.abort();
-  videoAbortCtrl = new AbortController();
-
-  document.getElementById('generate-video-btn').disabled = true;
-  document.getElementById('stop-video-btn').disabled = false;
-
-  try {
-    await fetchSSE('/api/generate_video/stream', {
-      video_prompt: document.getElementById('video-prompt').value,
-      workflow: document.getElementById('video-workflow').value,
-      seed: parseInt(document.getElementById('video-seed').value) || -1,
-      width: parseInt(document.getElementById('video-width').value),
-      height: parseInt(document.getElementById('video-height').value),
-      video_save_path: document.getElementById('video-save-path').value,
-      unload_llm_before_video: document.getElementById('unload-llm-before-video').checked,
-    }, data => {
-      if (data.type === 'status') {
-        videoStatus.textContent = data.content;
-      } else if (data.type === 'video') {
-        videoDisplay.src = data.url;
-        videoDisplay.style.display = 'block';
-        videoPlaceholder.style.display = 'none';
-        videoStatus.textContent = data.status;
-        if (data.saved_path) {
-          document.getElementById('video-file-path').textContent = data.saved_path;
-        }
-      } else if (data.type === 'error') {
-        videoStatus.textContent = data.content;
-      }
-    }, videoAbortCtrl.signal);
-  } finally {
-    document.getElementById('generate-video-btn').disabled = false;
-    document.getElementById('stop-video-btn').disabled = true;
-    videoAbortCtrl = null;
-  }
-}
-
-async function stopVideo() {
-  if (videoAbortCtrl) videoAbortCtrl.abort();
+document.getElementById('stop-video-btn').addEventListener('click', () => {
   if (videoPromptAbortCtrl) videoPromptAbortCtrl.abort();
-  const resp = await fetch('/api/stop_video', { method: 'POST' }).then(r => r.json());
-  videoStatus.textContent = resp.message;
-  document.getElementById('generate-video-btn').disabled = false;
-  document.getElementById('stop-video-btn').disabled = true;
-}
+  stopAllGeneration();
+  videoStatus.textContent = '停止しました';
+});
 
 // ---------------------------------------------------------------------------
 // 動画解像度プリセット
