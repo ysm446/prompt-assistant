@@ -3,27 +3,43 @@
 ## プロジェクト概要
 
 SD WebUI Forge × Qwen3-VL を組み合わせた画像・動画生成プロンプトアシスタント。
-Qwen3-VL との会話でプロンプトを磨き、WebUI Forge または ComfyUI で画像を生成する Gradio アプリ。
+Qwen3-VL との会話でプロンプトを磨き、WebUI Forge または ComfyUI で画像を生成する Electron アプリ。
 動画生成は ComfyUI + WAN 2.2 ワークフローに対応。
 
 ## 環境・実行方法
 
-- **Python 環境**: conda `main` 環境
-- **起動**: `start.bat` または `python app.py`
+- **Python 環境**: conda `main` 環境（`fastapi`, `uvicorn` が追加で必要）
+- **Node.js**: Electron を動かすために必要
+- **起動**: `start.bat`（初回は `electron/` で `npm install` が自動実行される）
 - **WebUI Forge**: `http://127.0.0.1:7861` で起動済みであること（`--api` フラグ不要、Gradio API を使用）
 - **ComfyUI**: `http://127.0.0.1:8188` で起動済みであること（REST API 使用）
 - **モデルキャッシュ**: `HF_HOME` を `models/` に設定済み
 
 ```bat
-call conda activate main
-python app.py
+# 初回セットアップ
+conda activate main
+pip install fastapi uvicorn
+
+# 起動
+start.bat
 ```
+
+## アーキテクチャ
+
+- **バックエンド**: `server.py`（FastAPI + uvicorn、ポート 8765）
+- **フロントエンド**: `frontend/`（HTML/CSS/JS、バックエンドが配信）
+- **Electron**: `electron/`（バックエンドを subprocess で起動、BrowserWindow で表示）
 
 ## ファイル構成
 
 | ファイル | 役割 |
 |---|---|
-| `app.py` | Gradio UI 定義・イベントハンドラ |
+| `server.py` | FastAPI バックエンド（REST API + SSE ストリーミング） |
+| `frontend/index.html` | メイン UI（2タブ・3列レイアウト） |
+| `frontend/style.css` | ダークテーマスタイル |
+| `frontend/app.js` | フロントエンドロジック（SSE クライアント、設定管理） |
+| `electron/main.js` | Electron メインプロセス（Python 起動、BrowserWindow） |
+| `electron/package.json` | Electron 依存関係 |
 | `a1111_client.py` | WebUI Forge Gradio API クライアント（`/txt2img`、152 パラメータ構成）、`free_vram()` |
 | `comfyui_client.py` | ComfyUI REST API クライアント（`/prompt`・`/history`・`/view`・`/free`）、ワークフロー差し替え |
 | `qwen_client.py` | Qwen3-VL 推論クライアント（transformers + qwen_vl_utils）、`unload_model()` |

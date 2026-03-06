@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prompt Assistant</title>
+  <link rel="stylesheet" href="/frontend/style.css">
+</head>
+<body>
+  <!-- Tab navigation -->
+  <nav class="tab-nav">
+    <button class="tab-btn active" data-tab="image">画像生成</button>
+    <button class="tab-btn" data-tab="video">動画生成</button>
+  </nav>
+
+  <!-- ================================================================
+       Tab 1: 画像生成
+       ================================================================ -->
+  <div id="tab-image" class="tab-content active">
+    <div class="three-col">
+
+      <!-- 左: 画像表示 -->
+      <div class="col">
+        <div class="image-drop-area" id="image-drop-area">
+          <img id="image-display" style="display:none" alt="生成画像">
+          <div id="image-placeholder" class="placeholder-text">
+            画像をドロップ<br>またはクリックしてアップロード
+          </div>
+          <input type="file" id="image-file-input" accept="image/*" style="display:none">
+        </div>
+        <div class="status-box" id="image-status"></div>
+      </div>
+
+      <!-- 中: プロンプト + パラメータ -->
+      <div class="col">
+        <label class="field-label">Positive Prompt</label>
+        <textarea id="positive-prompt" class="textarea" rows="6"
+          placeholder="例: 1girl, sunset, orange sky, dramatic lighting, ..."></textarea>
+
+        <label class="field-label">Negative Prompt</label>
+        <textarea id="negative-prompt" class="textarea" rows="3"
+          placeholder="例: bad quality, worst quality, ..."></textarea>
+
+        <div class="btn-row">
+          <button id="generate-btn" class="btn btn-primary">画像生成</button>
+          <button id="stop-btn" class="btn btn-secondary">停止</button>
+        </div>
+
+        <div class="field-row">
+          <label class="field-label" style="margin:0">生成枚数</label>
+          <input type="number" id="generate-count" class="number-input" value="1" min="1">
+        </div>
+
+        <!-- 画像生成パラメータ accordion -->
+        <details class="accordion">
+          <summary>画像生成パラメータ</summary>
+          <div class="accordion-body">
+
+            <div class="field-row">
+              <label class="field-label" style="margin:0">バックエンド</label>
+              <label class="radio-label">
+                <input type="radio" name="backend" value="WebUI Forge" checked> WebUI Forge
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="backend" value="ComfyUI"> ComfyUI
+              </label>
+            </div>
+
+            <div id="connection-status" class="status-small"></div>
+
+            <!-- ComfyUI workflow (ComfyUI のみ表示) -->
+            <div id="comfyui-params" style="display:none">
+              <label class="field-label">ComfyUI ワークフロー</label>
+              <select id="comfyui-workflow" class="select"></select>
+
+              <div class="slider-row">
+                <label>Width</label>
+                <input type="range" id="comfyui-width" min="64" max="2048" step="8" value="1024">
+                <span id="comfyui-width-val">1024</span>
+              </div>
+              <div class="slider-row">
+                <label>Height</label>
+                <input type="range" id="comfyui-height" min="64" max="2048" step="8" value="1024">
+                <span id="comfyui-height-val">1024</span>
+              </div>
+              <div class="field-row">
+                <label class="field-label" style="margin:0">Seed（-1 でランダム）</label>
+                <input type="number" id="comfyui-seed" class="number-input" value="-1">
+                <button class="btn btn-icon" id="comfyui-seed-random-btn" title="ランダム">🎲</button>
+                <button class="btn btn-icon" id="comfyui-seed-from-image-btn" title="画像から取得">♻️</button>
+              </div>
+            </div>
+
+            <!-- WebUI Forge params (Forge のみ表示) -->
+            <div id="forge-params">
+              <div class="slider-row">
+                <label>Steps</label>
+                <input type="range" id="steps-slider" min="1" max="150" step="1" value="28">
+                <span id="steps-val">28</span>
+              </div>
+              <div class="slider-row">
+                <label>CFG Scale</label>
+                <input type="range" id="cfg-slider" min="1" max="30" step="0.5" value="7">
+                <span id="cfg-val">7.0</span>
+              </div>
+              <label class="field-label">Sampler</label>
+              <select id="sampler-dropdown" class="select"></select>
+
+              <div class="slider-row">
+                <label>Width</label>
+                <input type="range" id="width-slider" min="64" max="2048" step="8" value="512">
+                <span id="width-val">512</span>
+              </div>
+              <div class="slider-row">
+                <label>Height</label>
+                <input type="range" id="height-slider" min="64" max="2048" step="8" value="768">
+                <span id="height-val">768</span>
+              </div>
+              <div class="field-row">
+                <label class="field-label" style="margin:0">Seed（-1 でランダム）</label>
+                <input type="number" id="seed-input" class="number-input" value="-1">
+                <button class="btn btn-icon" id="seed-random-btn" title="ランダム">🎲</button>
+                <button class="btn btn-icon" id="seed-from-image-btn" title="画像から取得">♻️</button>
+              </div>
+            </div>
+
+            <label class="checkbox-label">
+              <input type="checkbox" id="save-generated-image">
+              画像を保存する
+            </label>
+            <input type="text" id="image-save-path" class="text-input" value="./outputs/images"
+              placeholder="保存先パス" disabled>
+          </div>
+        </details>
+      </div>
+
+      <!-- 右: Qwen3-VL チャット -->
+      <div class="col">
+        <div class="chatbot" id="chatbot"></div>
+
+        <textarea id="user-input" class="textarea" rows="2"
+          placeholder="Qwen3-VL へのメッセージを入力..."></textarea>
+
+        <div class="btn-row">
+          <button id="send-btn" class="btn btn-primary">送信</button>
+          <button id="clear-btn" class="btn btn-secondary">クリア</button>
+        </div>
+
+        <!-- モデル設定 accordion -->
+        <details class="accordion" open>
+          <summary>モデル設定</summary>
+          <div class="accordion-body">
+            <div class="field-row">
+              <select id="model-dropdown" class="select" style="flex:1"></select>
+              <button id="load-model-btn" class="btn btn-secondary">ロード</button>
+            </div>
+            <div id="model-status" class="status-small">モデル未ロード</div>
+          </div>
+        </details>
+      </div>
+
+    </div><!-- /three-col -->
+  </div><!-- /tab-image -->
+
+  <!-- ================================================================
+       Tab 2: 動画生成
+       ================================================================ -->
+  <div id="tab-video" class="tab-content">
+    <div class="three-col">
+
+      <!-- 左: 動画表示 -->
+      <div class="col">
+        <div class="video-area">
+          <video id="video-display" controls style="display:none; width:100%; height:auto;"></video>
+          <div id="video-placeholder" class="placeholder-text">生成動画がここに表示されます</div>
+        </div>
+        <div class="status-box" id="video-status"></div>
+      </div>
+
+      <!-- 中: 動画プロンプト + 生成/停止 + VRAM -->
+      <div class="col">
+        <label class="field-label">動画プロンプト</label>
+        <textarea id="video-prompt" class="textarea" rows="10"
+          placeholder="「動画プロンプト生成」ボタンで自動生成、または直接入力"></textarea>
+
+        <div class="btn-row">
+          <button id="generate-video-btn" class="btn btn-primary">動画生成</button>
+          <button id="stop-video-btn" class="btn btn-secondary">停止</button>
+        </div>
+
+        <!-- VRAM accordion -->
+        <details class="accordion">
+          <summary>VRAM</summary>
+          <div class="accordion-body">
+            <div id="vram-status" class="status-small"></div>
+            <div class="btn-row">
+              <button id="free-qwen-btn" class="btn btn-secondary">LLM 解放</button>
+              <button id="free-comfy-btn" class="btn btn-secondary">ComfyUI 解放</button>
+            </div>
+            <label class="checkbox-label">
+              <input type="checkbox" id="unload-llm-before-video">
+              動画生成前にLLMのメモリを解放する
+            </label>
+          </div>
+        </details>
+
+        <!-- 動画生成パラメータ accordion -->
+        <details class="accordion">
+          <summary>動画生成パラメータ</summary>
+          <div class="accordion-body">
+            <label class="field-label">動画ワークフロー</label>
+            <select id="video-workflow" class="select"></select>
+
+            <div class="slider-row">
+              <label>Width</label>
+              <input type="range" id="video-width" min="240" max="1920" step="16" value="848">
+              <span id="video-width-val">848</span>
+            </div>
+            <div class="slider-row">
+              <label>Height</label>
+              <input type="range" id="video-height" min="240" max="1920" step="16" value="480">
+              <span id="video-height-val">480</span>
+            </div>
+            <div class="btn-row" style="margin-bottom:4px">
+              <button class="btn btn-secondary btn-sm" id="video-res-640">640 × 480</button>
+              <button class="btn btn-secondary btn-sm" id="video-res-1280">1280 × 720</button>
+            </div>
+
+            <div class="field-row">
+              <label class="field-label" style="margin:0">Seed（-1 でランダム）</label>
+              <input type="number" id="video-seed" class="number-input" value="-1">
+            </div>
+
+            <label class="checkbox-label">
+              <input type="checkbox" id="save-generated-video">
+              動画を保存する
+            </label>
+            <input type="text" id="video-save-path" class="text-input" value="./outputs/videos"
+              placeholder="保存先パス" disabled>
+          </div>
+        </details>
+      </div>
+
+      <!-- 右: 追加指示 + セクション + プロンプト生成 -->
+      <div class="col">
+        <label class="field-label">追加指示</label>
+        <textarea id="video-extra-instruction" class="textarea" rows="3"
+          placeholder="例: slowly zoom in, hair flowing in the wind, cinematic lighting"></textarea>
+
+        <label class="field-label" style="margin-top:8px">生成するセクション</label>
+        <div id="video-sections" class="checkbox-group" style="flex-direction:row; flex-wrap:wrap; gap:8px 16px;">
+          <label class="checkbox-label"><input type="checkbox" name="video-section" value="scene" checked> scene</label>
+          <label class="checkbox-label"><input type="checkbox" name="video-section" value="action" checked> action</label>
+          <label class="checkbox-label"><input type="checkbox" name="video-section" value="camera" checked> camera</label>
+          <label class="checkbox-label"><input type="checkbox" name="video-section" value="style" checked> style</label>
+          <label class="checkbox-label"><input type="checkbox" name="video-section" value="prompt" checked> prompt</label>
+        </div>
+
+        <button id="generate-video-prompt-btn" class="btn btn-primary" style="margin-top:8px; flex:none">
+          動画プロンプト生成
+        </button>
+
+        <!-- テキスト保存 accordion -->
+        <details class="accordion" style="margin-top:8px">
+          <summary>テキスト保存</summary>
+          <div class="accordion-body">
+            <label class="field-label">保存先フォルダ</label>
+            <input type="text" id="text-save-folder" class="text-input" value="./outputs/text"
+              placeholder="保存先フォルダのパスを入力...">
+            <button id="save-text-btn" class="btn btn-secondary" style="margin-top:4px">テキスト保存</button>
+            <div id="save-text-status" class="status-small"></div>
+          </div>
+        </details>
+      </div>
+
+    </div><!-- /three-col -->
+  </div><!-- /tab-video -->
+
+  <script src="/frontend/app.js"></script>
+</body>
+</html>

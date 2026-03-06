@@ -69,3 +69,7 @@ forge_api_info.txt
 
 # Windows特殊ファイル（誤作成防止）
 nul
+
+# Node.js
+node_modules/
+npm-debug.log*

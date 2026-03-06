@@ -1,0 +1,802 @@
+'use strict';
+
+// =========================================================
+// Prompt Assistant - フロントエンドロジック
+// =========================================================
+
+// ---------------------------------------------------------------------------
+// SSE ストリーミング ユーティリティ
+// ---------------------------------------------------------------------------
+
+/**
+ * POST リクエストで SSE を受信する。
+ * onEvent(data) は各データオブジェクトで呼ばれる。
+ * signal で AbortController によるキャンセルが可能。
+ */
+async function fetchSSE(url, body, onEvent, signal) {
+  let response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (e) {
+    if (e.name !== 'AbortError') throw e;
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            onEvent(JSON.parse(line.slice(6)));
+          } catch (_) { /* ignore parse errors */ }
+        }
+      }
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') throw e;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 状態
+// ---------------------------------------------------------------------------
+
+let imageAbortCtrl = null;
+let videoAbortCtrl = null;
+let chatAbortCtrl = null;
+let videoPromptAbortCtrl = null;
+
+// 設定保存デバウンス
+let saveTimer = null;
+
+// ---------------------------------------------------------------------------
+// タブ切り替え
+// ---------------------------------------------------------------------------
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const target = btn.dataset.tab;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(`tab-${target}`).classList.add('active');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// スライダー値表示
+// ---------------------------------------------------------------------------
+
+function bindSlider(sliderId, displayId, format) {
+  const slider = document.getElementById(sliderId);
+  const display = document.getElementById(displayId);
+  const fmt = format || (v => v);
+  slider.addEventListener('input', () => {
+    display.textContent = fmt(slider.value);
+    scheduleSave();
+  });
+}
+
+bindSlider('steps-slider', 'steps-val');
+bindSlider('cfg-slider', 'cfg-val', v => parseFloat(v).toFixed(1));
+bindSlider('width-slider', 'width-val');
+bindSlider('height-slider', 'height-val');
+bindSlider('comfyui-width', 'comfyui-width-val');
+bindSlider('comfyui-height', 'comfyui-height-val');
+bindSlider('video-width', 'video-width-val');
+bindSlider('video-height', 'video-height-val');
+
+// ---------------------------------------------------------------------------
+// バックエンド切り替え
+// ---------------------------------------------------------------------------
+
+function updateBackendVisibility() {
+  const isComfy = document.querySelector('input[name="backend"]:checked')?.value === 'ComfyUI';
+  document.getElementById('comfyui-params').style.display = isComfy ? '' : 'none';
+  document.getElementById('forge-params').style.display = isComfy ? 'none' : '';
+}
+
+document.querySelectorAll('input[name="backend"]').forEach(r => {
+  r.addEventListener('change', () => {
+    updateBackendVisibility();
+    scheduleSave();
+    checkConnection();
+  });
+});
+
+async function checkConnection() {
+  const backend = document.querySelector('input[name="backend"]:checked')?.value;
+  const statusEl = document.getElementById('connection-status');
+  statusEl.textContent = '接続確認中...';
+  try {
+    // Just show URL info; actual check happens on generate
+    if (backend === 'ComfyUI') {
+      statusEl.textContent = 'ComfyUI バックエンドを選択中';
+    } else {
+      statusEl.textContent = 'WebUI Forge バックエンドを選択中';
+    }
+  } catch (e) {
+    statusEl.textContent = String(e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 設定読み込み / 保存
+// ---------------------------------------------------------------------------
+
+function getSettings() {
+  const backend = document.querySelector('input[name="backend"]:checked')?.value || 'WebUI Forge';
+  const sections = Array.from(
+    document.querySelectorAll('input[name="video-section"]:checked')
+  ).map(el => el.value);
+
+  return {
+    model: document.getElementById('model-dropdown').value,
+    steps: parseInt(document.getElementById('steps-slider').value),
+    cfg: parseFloat(document.getElementById('cfg-slider').value),
+    sampler: document.getElementById('sampler-dropdown').value,
+    width: parseInt(document.getElementById('width-slider').value),
+    height: parseInt(document.getElementById('height-slider').value),
+    seed: parseInt(document.getElementById('seed-input').value) || -1,
+    backend,
+    comfyui_workflow: document.getElementById('comfyui-workflow').value,
+    comfyui_width: parseInt(document.getElementById('comfyui-width').value),
+    comfyui_height: parseInt(document.getElementById('comfyui-height').value),
+    comfyui_seed: parseInt(document.getElementById('comfyui-seed').value) || -1,
+    generate_count: parseInt(document.getElementById('generate-count').value) || 1,
+    save_generated_image: document.getElementById('save-generated-image').checked,
+    image_save_path: document.getElementById('image-save-path').value,
+    save_generated_video: document.getElementById('save-generated-video').checked,
+    video_save_path: document.getElementById('video-save-path').value,
+    video_workflow: document.getElementById('video-workflow').value,
+    text_save_path: document.getElementById('text-save-folder').value,
+    video_sections: sections,
+    video_width: parseInt(document.getElementById('video-width').value),
+    video_height: parseInt(document.getElementById('video-height').value),
+    video_seed: parseInt(document.getElementById('video-seed').value) || -1,
+  };
+}
+
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(getSettings()),
+    });
+  }, 600);
+}
+
+// 変更イベントで自動保存をスケジュール
+['positive-prompt', 'negative-prompt', 'generate-count',
+  'seed-input', 'comfyui-seed', 'video-seed',
+  'image-save-path', 'video-save-path', 'text-save-folder',
+  'model-dropdown', 'sampler-dropdown', 'comfyui-workflow', 'video-workflow',
+].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('change', scheduleSave);
+});
+
+document.querySelectorAll('input[name="video-section"]').forEach(cb => {
+  cb.addEventListener('change', scheduleSave);
+});
+
+document.getElementById('save-generated-image').addEventListener('change', e => {
+  document.getElementById('image-save-path').disabled = !e.target.checked;
+  scheduleSave();
+});
+
+document.getElementById('save-generated-video').addEventListener('change', e => {
+  document.getElementById('video-save-path').disabled = !e.target.checked;
+  scheduleSave();
+});
+
+async function loadSettings() {
+  const s = await fetch('/api/settings').then(r => r.json());
+
+  // Model
+  const modelDd = document.getElementById('model-dropdown');
+  if (modelDd.querySelector(`option[value="${s.model}"]`)) {
+    modelDd.value = s.model;
+  }
+
+  // Forge params
+  document.getElementById('steps-slider').value = s.steps ?? 28;
+  document.getElementById('steps-val').textContent = s.steps ?? 28;
+  document.getElementById('cfg-slider').value = s.cfg ?? 7;
+  document.getElementById('cfg-val').textContent = parseFloat(s.cfg ?? 7).toFixed(1);
+  document.getElementById('width-slider').value = s.width ?? 512;
+  document.getElementById('width-val').textContent = s.width ?? 512;
+  document.getElementById('height-slider').value = s.height ?? 768;
+  document.getElementById('height-val').textContent = s.height ?? 768;
+  document.getElementById('seed-input').value = s.seed ?? -1;
+
+  // Sampler
+  const samplerDd = document.getElementById('sampler-dropdown');
+  if (samplerDd.querySelector(`option[value="${s.sampler}"]`)) {
+    samplerDd.value = s.sampler;
+  }
+
+  // ComfyUI params
+  document.getElementById('comfyui-width').value = s.comfyui_width ?? 1024;
+  document.getElementById('comfyui-width-val').textContent = s.comfyui_width ?? 1024;
+  document.getElementById('comfyui-height').value = s.comfyui_height ?? 1024;
+  document.getElementById('comfyui-height-val').textContent = s.comfyui_height ?? 1024;
+  document.getElementById('comfyui-seed').value = s.comfyui_seed ?? -1;
+
+  // ComfyUI workflow
+  const wfDd = document.getElementById('comfyui-workflow');
+  if (s.comfyui_workflow && wfDd.querySelector(`option[value="${s.comfyui_workflow}"]`)) {
+    wfDd.value = s.comfyui_workflow;
+  }
+
+  // Backend
+  const backendVal = s.backend === 'Forge 2' ? 'WebUI Forge' : (s.backend || 'WebUI Forge');
+  const radioEl = document.querySelector(`input[name="backend"][value="${backendVal}"]`);
+  if (radioEl) radioEl.checked = true;
+  updateBackendVisibility();
+
+  // Count
+  document.getElementById('generate-count').value = s.generate_count ?? 1;
+
+  // Save image
+  document.getElementById('save-generated-image').checked = !!s.save_generated_image;
+  document.getElementById('image-save-path').value = s.image_save_path || './outputs/images';
+  document.getElementById('image-save-path').disabled = !s.save_generated_image;
+
+  // Video workflow
+  const vwfDd = document.getElementById('video-workflow');
+  if (s.video_workflow && vwfDd.querySelector(`option[value="${s.video_workflow}"]`)) {
+    vwfDd.value = s.video_workflow;
+  }
+
+  // Video params
+  document.getElementById('video-width').value = s.video_width ?? 848;
+  document.getElementById('video-width-val').textContent = s.video_width ?? 848;
+  document.getElementById('video-height').value = s.video_height ?? 480;
+  document.getElementById('video-height-val').textContent = s.video_height ?? 480;
+  document.getElementById('video-seed').value = s.video_seed ?? -1;
+
+  // Save video
+  document.getElementById('save-generated-video').checked = !!s.save_generated_video;
+  document.getElementById('video-save-path').value = s.video_save_path || './outputs/videos';
+  document.getElementById('video-save-path').disabled = !s.save_generated_video;
+
+  // Text save
+  document.getElementById('text-save-folder').value = s.text_save_path || './outputs/text';
+
+  // Video sections
+  if (Array.isArray(s.video_sections)) {
+    document.querySelectorAll('input[name="video-section"]').forEach(cb => {
+      cb.checked = s.video_sections.includes(cb.value);
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ドロップダウン初期化
+// ---------------------------------------------------------------------------
+
+async function initDropdowns() {
+  // モデル一覧
+  const presetsResp = await fetch('/api/model_presets').then(r => r.json());
+  const modelDd = document.getElementById('model-dropdown');
+  modelDd.innerHTML = '';
+  for (const preset of presetsResp.presets) {
+    const opt = document.createElement('option');
+    opt.value = preset;
+    opt.textContent = preset;
+    modelDd.appendChild(opt);
+  }
+
+  // サンプラー一覧
+  const samplersResp = await fetch('/api/samplers').then(r => r.json());
+  const samplerDd = document.getElementById('sampler-dropdown');
+  samplerDd.innerHTML = '';
+  for (const s of samplersResp.samplers) {
+    const opt = document.createElement('option');
+    opt.value = s;
+    opt.textContent = s;
+    samplerDd.appendChild(opt);
+  }
+
+  // 画像ワークフロー
+  const wfResp = await fetch('/api/workflows').then(r => r.json());
+  const wfDd = document.getElementById('comfyui-workflow');
+  wfDd.innerHTML = '';
+  for (const w of wfResp.workflows) {
+    const opt = document.createElement('option');
+    opt.value = w;
+    opt.textContent = w;
+    wfDd.appendChild(opt);
+  }
+
+  // 動画ワークフロー
+  const vwfResp = await fetch('/api/video_workflows').then(r => r.json());
+  const vwfDd = document.getElementById('video-workflow');
+  vwfDd.innerHTML = '';
+  for (const w of vwfResp.workflows) {
+    const opt = document.createElement('option');
+    opt.value = w;
+    opt.textContent = w;
+    vwfDd.appendChild(opt);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 画像アップロード
+// ---------------------------------------------------------------------------
+
+const imageDropArea = document.getElementById('image-drop-area');
+const imageFileInput = document.getElementById('image-file-input');
+const imageDisplay = document.getElementById('image-display');
+const imagePlaceholder = document.getElementById('image-placeholder');
+const imageStatus = document.getElementById('image-status');
+
+function showImage(src) {
+  imageDisplay.src = src;
+  imageDisplay.style.display = 'block';
+  imagePlaceholder.style.display = 'none';
+}
+
+imageDropArea.addEventListener('click', () => imageFileInput.click());
+
+imageDropArea.addEventListener('dragover', e => {
+  e.preventDefault();
+  imageDropArea.classList.add('dragover');
+});
+
+imageDropArea.addEventListener('dragleave', () => {
+  imageDropArea.classList.remove('dragover');
+});
+
+imageDropArea.addEventListener('drop', async e => {
+  e.preventDefault();
+  imageDropArea.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type.startsWith('image/')) {
+    await uploadImage(file);
+  }
+});
+
+imageFileInput.addEventListener('change', async () => {
+  const file = imageFileInput.files[0];
+  if (file) await uploadImage(file);
+  imageFileInput.value = '';
+});
+
+async function uploadImage(file) {
+  imageStatus.textContent = 'アップロード中...';
+  const formData = new FormData();
+  formData.append('file', file);
+  try {
+    const resp = await fetch('/api/image/upload', { method: 'POST', body: formData });
+    const data = await resp.json();
+    showImage(data.image);
+    imageStatus.textContent = data.status;
+    if (data.meta) {
+      applyMetadata(data.meta);
+    }
+  } catch (e) {
+    imageStatus.textContent = `エラー: ${e}`;
+  }
+}
+
+function applyMetadata(meta) {
+  if (meta.positive != null) document.getElementById('positive-prompt').value = meta.positive;
+  if (meta.negative != null) document.getElementById('negative-prompt').value = meta.negative;
+  if (meta.steps != null) {
+    document.getElementById('steps-slider').value = meta.steps;
+    document.getElementById('steps-val').textContent = meta.steps;
+  }
+  if (meta.cfg_scale != null) {
+    document.getElementById('cfg-slider').value = meta.cfg_scale;
+    document.getElementById('cfg-val').textContent = parseFloat(meta.cfg_scale).toFixed(1);
+  }
+  if (meta.sampler != null) {
+    const dd = document.getElementById('sampler-dropdown');
+    if (dd.querySelector(`option[value="${meta.sampler}"]`)) dd.value = meta.sampler;
+  }
+  if (meta.width != null) {
+    document.getElementById('width-slider').value = meta.width;
+    document.getElementById('width-val').textContent = meta.width;
+  }
+  if (meta.height != null) {
+    document.getElementById('height-slider').value = meta.height;
+    document.getElementById('height-val').textContent = meta.height;
+  }
+  if (meta.seed != null) {
+    document.getElementById('seed-input').value = meta.seed;
+    document.getElementById('comfyui-seed').value = meta.seed;
+  }
+  scheduleSave();
+}
+
+// Seed ボタン
+document.getElementById('seed-random-btn').addEventListener('click', () => {
+  document.getElementById('seed-input').value = -1;
+  scheduleSave();
+});
+
+document.getElementById('comfyui-seed-random-btn').addEventListener('click', () => {
+  document.getElementById('comfyui-seed').value = -1;
+  scheduleSave();
+});
+
+async function seedFromImage(targetId) {
+  const resp = await fetch('/api/seed_from_image', { method: 'POST' }).then(r => r.json());
+  if (resp.ok) {
+    document.getElementById(targetId).value = resp.seed;
+    imageStatus.textContent = resp.message;
+    scheduleSave();
+  } else {
+    imageStatus.textContent = resp.message;
+  }
+}
+
+document.getElementById('seed-from-image-btn').addEventListener('click',
+  () => seedFromImage('seed-input'));
+document.getElementById('comfyui-seed-from-image-btn').addEventListener('click',
+  () => seedFromImage('comfyui-seed'));
+
+// ---------------------------------------------------------------------------
+// 画像生成
+// ---------------------------------------------------------------------------
+
+document.getElementById('generate-btn').addEventListener('click', generateImage);
+document.getElementById('stop-btn').addEventListener('click', stopImageGeneration);
+
+async function generateImage() {
+  if (imageAbortCtrl) imageAbortCtrl.abort();
+  imageAbortCtrl = new AbortController();
+
+  document.getElementById('generate-btn').disabled = true;
+  document.getElementById('stop-btn').disabled = false;
+
+  const backend = document.querySelector('input[name="backend"]:checked')?.value;
+  const body = {
+    positive: document.getElementById('positive-prompt').value,
+    negative: document.getElementById('negative-prompt').value,
+    steps: parseInt(document.getElementById('steps-slider').value),
+    cfg: parseFloat(document.getElementById('cfg-slider').value),
+    sampler: document.getElementById('sampler-dropdown').value,
+    width: parseInt(document.getElementById('width-slider').value),
+    height: parseInt(document.getElementById('height-slider').value),
+    seed: parseInt(document.getElementById('seed-input').value) || -1,
+    backend,
+    comfyui_workflow: document.getElementById('comfyui-workflow').value,
+    comfyui_width: parseInt(document.getElementById('comfyui-width').value),
+    comfyui_height: parseInt(document.getElementById('comfyui-height').value),
+    comfyui_seed: parseInt(document.getElementById('comfyui-seed').value) || -1,
+    count: parseInt(document.getElementById('generate-count').value) || 1,
+    save_generated_image: document.getElementById('save-generated-image').checked,
+    image_save_path: document.getElementById('image-save-path').value,
+  };
+
+  try {
+    await fetchSSE('/api/generate_image/stream', body, data => {
+      if (data.type === 'status') {
+        imageStatus.textContent = data.content;
+      } else if (data.type === 'image') {
+        showImage(data.image);
+        imageStatus.textContent = data.status;
+      } else if (data.type === 'error') {
+        imageStatus.textContent = data.content;
+      }
+    }, imageAbortCtrl.signal);
+  } finally {
+    document.getElementById('generate-btn').disabled = false;
+    document.getElementById('stop-btn').disabled = true;
+    imageAbortCtrl = null;
+  }
+}
+
+function stopImageGeneration() {
+  if (imageAbortCtrl) imageAbortCtrl.abort();
+  fetch('/api/interrupt_image', { method: 'POST' });
+  imageStatus.textContent = '停止しました';
+  document.getElementById('generate-btn').disabled = false;
+  document.getElementById('stop-btn').disabled = true;
+}
+
+// ---------------------------------------------------------------------------
+// チャット
+// ---------------------------------------------------------------------------
+
+const chatbot = document.getElementById('chatbot');
+const userInput = document.getElementById('user-input');
+
+document.getElementById('send-btn').addEventListener('click', sendChat);
+document.getElementById('clear-btn').addEventListener('click', clearChat);
+
+userInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendChat();
+  }
+});
+
+function appendMessage(role, content, id) {
+  const div = document.createElement('div');
+  div.className = `chat-message ${role}`;
+  if (id) div.id = id;
+  const roleLabel = document.createElement('div');
+  roleLabel.className = 'chat-role';
+  roleLabel.textContent = role === 'user' ? 'あなた' : 'Qwen3-VL';
+  const contentDiv = document.createElement('div');
+  contentDiv.className = 'chat-content';
+  contentDiv.textContent = content;
+  div.appendChild(roleLabel);
+  div.appendChild(contentDiv);
+  chatbot.appendChild(div);
+  chatbot.scrollTop = chatbot.scrollHeight;
+  return contentDiv;
+}
+
+async function sendChat() {
+  const text = userInput.value.trim();
+  if (!text) return;
+
+  if (chatAbortCtrl) chatAbortCtrl.abort();
+  chatAbortCtrl = new AbortController();
+
+  userInput.value = '';
+  document.getElementById('send-btn').disabled = true;
+
+  appendMessage('user', text);
+  const assistantContent = appendMessage('assistant', '');
+
+  const msgId = 'msg-' + Date.now();
+  assistantContent.parentElement.id = msgId;
+
+  let partial = '';
+
+  try {
+    await fetchSSE('/api/chat/stream', {
+      user_input: text,
+      model_label: document.getElementById('model-dropdown').value,
+      positive: document.getElementById('positive-prompt').value,
+      negative: document.getElementById('negative-prompt').value,
+    }, data => {
+      if (data.type === 'token') {
+        partial += data.content;
+        assistantContent.textContent = partial;
+        chatbot.scrollTop = chatbot.scrollHeight;
+      } else if (data.type === 'model_loaded') {
+        document.getElementById('model-status').textContent = data.message;
+      } else if (data.type === 'done') {
+        if (data.display_text != null) {
+          assistantContent.textContent = data.display_text;
+        }
+        if (data.positive != null) {
+          document.getElementById('positive-prompt').value = data.positive;
+          scheduleSave();
+        }
+        if (data.negative != null) {
+          document.getElementById('negative-prompt').value = data.negative;
+          scheduleSave();
+        }
+      } else if (data.type === 'error') {
+        assistantContent.textContent = `エラー: ${data.content}`;
+      }
+    }, chatAbortCtrl.signal);
+  } finally {
+    document.getElementById('send-btn').disabled = false;
+    chatAbortCtrl = null;
+  }
+}
+
+async function clearChat() {
+  await fetch('/api/chat/clear', { method: 'POST' });
+  chatbot.innerHTML = '';
+}
+
+// ---------------------------------------------------------------------------
+// モデルロード
+// ---------------------------------------------------------------------------
+
+document.getElementById('load-model-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('load-model-btn');
+  btn.disabled = true;
+  document.getElementById('model-status').textContent = 'ロード中...';
+  try {
+    const resp = await fetch('/api/load_model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model_label: document.getElementById('model-dropdown').value }),
+    }).then(r => r.json());
+    document.getElementById('model-status').textContent = resp.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('model-dropdown').addEventListener('change', scheduleSave);
+
+// ---------------------------------------------------------------------------
+// VRAM
+// ---------------------------------------------------------------------------
+
+document.getElementById('free-qwen-btn').addEventListener('click', async () => {
+  const resp = await fetch('/api/unload_qwen', { method: 'POST' }).then(r => r.json());
+  document.getElementById('vram-status').textContent = resp.message;
+});
+
+document.getElementById('free-comfy-btn').addEventListener('click', async () => {
+  const resp = await fetch('/api/free_comfyui', { method: 'POST' }).then(r => r.json());
+  document.getElementById('vram-status').textContent = resp.message;
+});
+
+// ---------------------------------------------------------------------------
+// 動画プロンプト生成
+// ---------------------------------------------------------------------------
+
+document.getElementById('generate-video-prompt-btn').addEventListener('click', generateVideoPrompt);
+
+async function generateVideoPrompt() {
+  if (videoPromptAbortCtrl) videoPromptAbortCtrl.abort();
+  videoPromptAbortCtrl = new AbortController();
+
+  const btn = document.getElementById('generate-video-prompt-btn');
+  btn.disabled = true;
+
+  const sections = Array.from(
+    document.querySelectorAll('input[name="video-section"]:checked')
+  ).map(el => el.value);
+
+  document.getElementById('video-prompt').value = '';
+  let accumulated = '';
+
+  try {
+    await fetchSSE('/api/video_prompt/stream', {
+      positive: document.getElementById('positive-prompt').value,
+      extra_instruction: document.getElementById('video-extra-instruction').value,
+      sections,
+      model_label: document.getElementById('model-dropdown').value,
+    }, data => {
+      if (data.type === 'token') {
+        accumulated += data.content;
+        document.getElementById('video-prompt').value = accumulated;
+      } else if (data.type === 'status') {
+        document.getElementById('video-status').textContent = data.content;
+      } else if (data.type === 'error') {
+        document.getElementById('video-status').textContent = `エラー: ${data.content}`;
+      }
+    }, videoPromptAbortCtrl.signal);
+  } finally {
+    btn.disabled = false;
+    videoPromptAbortCtrl = null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 動画生成
+// ---------------------------------------------------------------------------
+
+const videoDisplay = document.getElementById('video-display');
+const videoPlaceholder = document.getElementById('video-placeholder');
+const videoStatus = document.getElementById('video-status');
+
+document.getElementById('generate-video-btn').addEventListener('click', generateVideo);
+document.getElementById('stop-video-btn').addEventListener('click', stopVideo);
+
+async function generateVideo() {
+  if (videoAbortCtrl) videoAbortCtrl.abort();
+  videoAbortCtrl = new AbortController();
+
+  document.getElementById('generate-video-btn').disabled = true;
+  document.getElementById('stop-video-btn').disabled = false;
+
+  try {
+    await fetchSSE('/api/generate_video/stream', {
+      video_prompt: document.getElementById('video-prompt').value,
+      workflow: document.getElementById('video-workflow').value,
+      seed: parseInt(document.getElementById('video-seed').value) || -1,
+      width: parseInt(document.getElementById('video-width').value),
+      height: parseInt(document.getElementById('video-height').value),
+      save_generated_video: document.getElementById('save-generated-video').checked,
+      video_save_path: document.getElementById('video-save-path').value,
+      unload_llm_before_video: document.getElementById('unload-llm-before-video').checked,
+    }, data => {
+      if (data.type === 'status') {
+        videoStatus.textContent = data.content;
+      } else if (data.type === 'video') {
+        videoDisplay.src = data.url;
+        videoDisplay.style.display = 'block';
+        videoPlaceholder.style.display = 'none';
+        videoStatus.textContent = data.status;
+      } else if (data.type === 'error') {
+        videoStatus.textContent = data.content;
+      }
+    }, videoAbortCtrl.signal);
+  } finally {
+    document.getElementById('generate-video-btn').disabled = false;
+    document.getElementById('stop-video-btn').disabled = true;
+    videoAbortCtrl = null;
+  }
+}
+
+async function stopVideo() {
+  if (videoAbortCtrl) videoAbortCtrl.abort();
+  if (videoPromptAbortCtrl) videoPromptAbortCtrl.abort();
+  const resp = await fetch('/api/stop_video', { method: 'POST' }).then(r => r.json());
+  videoStatus.textContent = resp.message;
+  document.getElementById('generate-video-btn').disabled = false;
+  document.getElementById('stop-video-btn').disabled = true;
+}
+
+// ---------------------------------------------------------------------------
+// 動画解像度プリセット
+// ---------------------------------------------------------------------------
+
+document.getElementById('video-res-640').addEventListener('click', () => {
+  document.getElementById('video-width').value = 640;
+  document.getElementById('video-width-val').textContent = 640;
+  document.getElementById('video-height').value = 480;
+  document.getElementById('video-height-val').textContent = 480;
+  scheduleSave();
+});
+
+document.getElementById('video-res-1280').addEventListener('click', () => {
+  document.getElementById('video-width').value = 1280;
+  document.getElementById('video-width-val').textContent = 1280;
+  document.getElementById('video-height').value = 720;
+  document.getElementById('video-height-val').textContent = 720;
+  scheduleSave();
+});
+
+// ---------------------------------------------------------------------------
+// テキスト保存
+// ---------------------------------------------------------------------------
+
+document.getElementById('save-text-btn').addEventListener('click', async () => {
+  const resp = await fetch('/api/save_text', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      folder: document.getElementById('text-save-folder').value,
+      positive: document.getElementById('positive-prompt').value,
+      extra_instruction: document.getElementById('video-extra-instruction').value,
+      video_prompt: document.getElementById('video-prompt').value,
+    }),
+  }).then(r => r.json());
+  document.getElementById('save-text-status').textContent = resp.message;
+});
+
+// ---------------------------------------------------------------------------
+// 初期化
+// ---------------------------------------------------------------------------
+
+async function init() {
+  try {
+    await initDropdowns();
+    await loadSettings();
+  } catch (e) {
+    console.error('初期化エラー:', e);
+  }
+
+  // 停止ボタンは初期無効
+  document.getElementById('stop-btn').disabled = true;
+  document.getElementById('stop-video-btn').disabled = true;
+
+  updateBackendVisibility();
+}
+
+init();
