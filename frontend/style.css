@@ -299,6 +299,23 @@ html, body {
   flex-wrap: wrap;
 }
 
+.seed-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.seed-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.seed-input {
+  width: 120px;
+}
+
 /* ---- Sliders ---- */
 .slider-row {
   display: grid;

@@ -109,6 +109,8 @@ function updateBackendVisibility() {
   const isComfy = document.querySelector('input[name="backend"]:checked')?.value === 'ComfyUI';
   document.getElementById('comfyui-params').style.display = isComfy ? '' : 'none';
   document.getElementById('forge-params').style.display = isComfy ? 'none' : '';
+  document.getElementById('comfyui-seed-controls').style.display = isComfy ? '' : 'none';
+  document.getElementById('forge-seed-controls').style.display = isComfy ? 'none' : '';
 }
 
 document.querySelectorAll('input[name="backend"]').forEach(r => {
