@@ -337,6 +337,17 @@ function showImage(src) {
   imagePlaceholder.style.display = 'none';
 }
 
+function setSavePathsFromFilePath(filePath) {
+  if (!filePath) return;
+  const normalized = filePath.replace(/\\/g, '/');
+  const idx = normalized.lastIndexOf('/');
+  if (idx < 0) return;
+  const dir = filePath.slice(0, idx);
+  document.getElementById('image-save-path').value = dir;
+  document.getElementById('video-save-path').value = dir;
+  scheduleSave();
+}
+
 imageDropArea.addEventListener('click', () => imageFileInput.click());
 
 imageDropArea.addEventListener('dragover', e => {
@@ -353,6 +364,8 @@ imageDropArea.addEventListener('drop', async e => {
   imageDropArea.classList.remove('dragover');
   const file = e.dataTransfer.files[0];
   if (!file) return;
+  const filePath = window.electronAPI?.getPathForFile?.(file) || '';
+  setSavePathsFromFilePath(filePath);
   if (file.type.startsWith('image/')) {
     await uploadImage(file);
     return;
