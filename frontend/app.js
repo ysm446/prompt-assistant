@@ -78,6 +78,8 @@ let videoPromptAbortCtrl = null;
 // 設定保存デバウンス
 let saveTimer = null;
 
+const PANEL_LAYOUT_KEY = 'panel-layout-v1';
+
 // ---------------------------------------------------------------------------
 // スライダー値表示
 // ---------------------------------------------------------------------------
@@ -928,6 +930,108 @@ document.getElementById('save-json-btn').addEventListener('click', async () => {
 });
 
 // ---------------------------------------------------------------------------
+// 上下パネルのリサイズ
+// ---------------------------------------------------------------------------
+
+function initPanelResizer() {
+  const imageBlock = document.getElementById('tab-image');
+  const videoBlock = document.getElementById('tab-video');
+  const resizer = document.getElementById('panel-resizer');
+  if (!imageBlock || !videoBlock || !resizer) return;
+
+  const minPanelHeight = 180;
+
+  function applyHeights(topHeight, bottomHeight) {
+    imageBlock.style.flex = `0 0 ${topHeight}px`;
+    imageBlock.style.flexBasis = `${topHeight}px`;
+    videoBlock.style.flex = `0 0 ${bottomHeight}px`;
+    videoBlock.style.flexBasis = `${bottomHeight}px`;
+  }
+
+  function saveHeights(topHeight, bottomHeight) {
+    try {
+      localStorage.setItem(PANEL_LAYOUT_KEY, JSON.stringify({ topHeight, bottomHeight }));
+    } catch (_) { /* ignore storage errors */ }
+  }
+
+  function clampHeights(topHeight) {
+    const totalHeight = window.innerHeight - resizer.offsetHeight;
+    const maxTopHeight = Math.max(minPanelHeight, totalHeight - minPanelHeight);
+    const clampedTopHeight = Math.min(Math.max(topHeight, minPanelHeight), maxTopHeight);
+    return {
+      topHeight: clampedTopHeight,
+      bottomHeight: totalHeight - clampedTopHeight,
+    };
+  }
+
+  function restoreHeights() {
+    try {
+      const raw = localStorage.getItem(PANEL_LAYOUT_KEY);
+      if (!raw) return false;
+      const parsed = JSON.parse(raw);
+      if (!Number.isFinite(parsed.topHeight)) return false;
+      const { topHeight, bottomHeight } = clampHeights(parsed.topHeight);
+      applyHeights(topHeight, bottomHeight);
+      saveHeights(topHeight, bottomHeight);
+      return Number.isFinite(parsed.bottomHeight) || Number.isFinite(bottomHeight);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function syncToViewport() {
+    const totalHeight = window.innerHeight - resizer.offsetHeight;
+    const currentTop = imageBlock.getBoundingClientRect().height;
+    const nextTop = currentTop > 0 ? currentTop : totalHeight / 2;
+    const { topHeight, bottomHeight } = clampHeights(nextTop);
+    applyHeights(topHeight, bottomHeight);
+  }
+
+  let startY = 0;
+  let startTopHeight = 0;
+
+  resizer.addEventListener('pointerdown', event => {
+    startY = event.clientY;
+    startTopHeight = imageBlock.getBoundingClientRect().height;
+    resizer.classList.add('dragging');
+    document.body.classList.add('is-resizing');
+    resizer.setPointerCapture(event.pointerId);
+  });
+
+  resizer.addEventListener('pointermove', event => {
+    if (!resizer.classList.contains('dragging')) return;
+    const delta = event.clientY - startY;
+    const { topHeight, bottomHeight } = clampHeights(startTopHeight + delta);
+    applyHeights(topHeight, bottomHeight);
+  });
+
+  function finishResize(event) {
+    if (!resizer.classList.contains('dragging')) return;
+    const { topHeight, bottomHeight } = clampHeights(imageBlock.getBoundingClientRect().height);
+    applyHeights(topHeight, bottomHeight);
+    saveHeights(topHeight, bottomHeight);
+    resizer.classList.remove('dragging');
+    document.body.classList.remove('is-resizing');
+    if (event?.pointerId != null && resizer.hasPointerCapture(event.pointerId)) {
+      resizer.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  resizer.addEventListener('pointerup', finishResize);
+  resizer.addEventListener('pointercancel', finishResize);
+  window.addEventListener('resize', () => {
+    syncToViewport();
+    const topHeight = imageBlock.getBoundingClientRect().height;
+    const bottomHeight = videoBlock.getBoundingClientRect().height;
+    saveHeights(topHeight, bottomHeight);
+  });
+
+  if (!restoreHeights()) {
+    syncToViewport();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 初期化
 // ---------------------------------------------------------------------------
 
@@ -944,6 +1048,7 @@ async function init() {
   document.getElementById('stop-video-btn').disabled = true;
 
   updateBackendVisibility();
+  initPanelResizer();
 }
 
 init();

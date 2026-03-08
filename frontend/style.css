@@ -45,12 +45,35 @@ html, body {
   display: flex;
   flex-direction: column;
   flex: 1 1 0;
+  flex-basis: 0;
   min-height: 0;
-  border-bottom: 2px solid var(--border);
 }
 
-.block:last-child {
-  border-bottom: none;
+.panel-resizer {
+  position: relative;
+  flex: 0 0 12px;
+  cursor: row-resize;
+  background: var(--bg2);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-resizer::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 56px;
+  height: 4px;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: var(--border);
+  transition: background 0.15s;
+}
+
+.panel-resizer:hover::before,
+.panel-resizer.dragging::before {
+  background: var(--accent);
 }
 
 .block-header {
@@ -429,6 +452,11 @@ html, body {
   gap: 10px;
   scroll-behavior: smooth;
   box-shadow: var(--shadow);
+}
+
+body.is-resizing {
+  user-select: none;
+  cursor: row-resize;
 }
 
 .chat-message {
