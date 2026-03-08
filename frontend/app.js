@@ -552,6 +552,7 @@ function getQueueLabel() {
 function setImageBusy(busy) {
   document.getElementById('generate-btn').disabled = false; // 常に押せる
   document.getElementById('stop-btn').disabled = !busy;
+  document.getElementById('image-drop-area').classList.toggle('generating', busy);
 }
 
 function setVideoBusy(busy) {
