@@ -352,8 +352,13 @@ imageDropArea.addEventListener('drop', async e => {
   e.preventDefault();
   imageDropArea.classList.remove('dragover');
   const file = e.dataTransfer.files[0];
-  if (file && file.type.startsWith('image/')) {
+  if (!file) return;
+  if (file.type.startsWith('image/')) {
     await uploadImage(file);
+    return;
+  }
+  if (file.name.toLowerCase().endsWith('.json')) {
+    await uploadJson(file);
   }
 });
 
@@ -379,6 +384,36 @@ async function uploadImage(file) {
     }
     if (data.meta) {
       applyMetadata(data.meta);
+    }
+    if (data.saved_json) {
+      applySavedJson(data.saved_json);
+    }
+  } catch (e) {
+    imageStatus.textContent = `エラー: ${e}`;
+  }
+}
+
+async function uploadJson(file) {
+  imageStatus.textContent = 'JSON 読み込み中...';
+  const formData = new FormData();
+  formData.append('file', file);
+  try {
+    const resp = await fetch('/api/json/upload', { method: 'POST', body: formData });
+    const data = await resp.json();
+    if (!data.ok) {
+      imageStatus.textContent = data.message || 'JSON の読み込みに失敗しました';
+      return;
+    }
+    showImage(data.image);
+    imageStatus.textContent = data.status;
+    if (data.image_path) {
+      document.getElementById('image-file-path').textContent = data.image_path;
+    }
+    if (data.meta) {
+      applyMetadata(data.meta);
+    }
+    if (data.saved_json) {
+      applySavedJson(data.saved_json);
     }
   } catch (e) {
     imageStatus.textContent = `エラー: ${e}`;
@@ -412,6 +447,29 @@ function applyMetadata(meta) {
     document.getElementById('seed-input').value = meta.seed;
     document.getElementById('comfyui-seed').value = meta.seed;
   }
+  scheduleSave();
+}
+
+function applySavedJson(data) {
+  if (data.prompt != null) document.getElementById('video-prompt').value = data.prompt;
+  if (data.additional_instruction != null) {
+    document.getElementById('video-extra-instruction').value = data.additional_instruction;
+  }
+
+  if (data.comfyui_workflow != null) {
+    const dd = document.getElementById('comfyui-workflow');
+    if (dd.querySelector(`option[value="${data.comfyui_workflow}"]`)) {
+      dd.value = data.comfyui_workflow;
+    }
+  }
+
+  if (data.video_workflow != null) {
+    const dd = document.getElementById('video-workflow');
+    if (dd.querySelector(`option[value="${data.video_workflow}"]`)) {
+      dd.value = data.video_workflow;
+    }
+  }
+
   scheduleSave();
 }
 
@@ -847,6 +905,8 @@ document.getElementById('save-json-btn').addEventListener('click', async () => {
     body: JSON.stringify({
       video_prompt: document.getElementById('video-prompt').value,
       additional_instruction: document.getElementById('video-extra-instruction').value,
+      comfyui_workflow: document.getElementById('comfyui-workflow').value,
+      video_workflow: document.getElementById('video-workflow').value,
     }),
   }).then(r => r.json());
   statusEl.textContent = resp.message;

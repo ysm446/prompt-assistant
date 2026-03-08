@@ -271,11 +271,21 @@ async def upload_image(file: UploadFile = File(...), image_path: str = Form(""))
     _state["current_image_path"] = image_path
     b64 = _image_to_b64(image)
     meta = read_a1111_metadata(image) or read_comfyui_metadata(image)
+    saved_json = None
+    if image_path:
+        try:
+            json_path = Path(image_path).with_suffix(".json")
+            if json_path.is_file():
+                with open(json_path, "r", encoding="utf-8") as f:
+                    saved_json = json.load(f)
+        except Exception:
+            saved_json = None
     if meta is None:
         return {
             "image": b64,
             "status": "画像を読み込みました。メタデータが見つかりません。",
             "meta": None,
+            "saved_json": saved_json,
         }
     source = "A1111" if image.info.get("parameters") else "ComfyUI"
     return {
@@ -291,6 +301,51 @@ async def upload_image(file: UploadFile = File(...), image_path: str = Form(""))
             "height": meta.get("height"),
             "seed": meta.get("seed"),
         },
+        "saved_json": saved_json,
+    }
+
+
+@app.post("/api/json/upload")
+async def upload_json(file: UploadFile = File(...)):
+    raw = await file.read()
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except Exception:
+        return {"ok": False, "message": "JSON を読み取れませんでした"}
+
+    image_path = (
+        (data.get("image_path") or "").strip()
+        or str((data.get("metadata") or {}).get("path", "")).strip()
+    )
+    if not image_path:
+        return {"ok": False, "message": "JSON に画像パスがありません"}
+
+    try:
+        image = Image.open(image_path).copy()
+    except Exception as e:
+        return {"ok": False, "message": f"画像を開けませんでした: {e}"}
+
+    _state["current_image"] = image
+    _state["current_image_path"] = image_path
+    b64 = _image_to_b64(image)
+    meta = read_a1111_metadata(image) or read_comfyui_metadata(image)
+
+    return {
+        "ok": True,
+        "image": b64,
+        "image_path": image_path,
+        "status": "JSON を読み込みました。",
+        "meta": {
+            "positive": (meta or {}).get("positive", ""),
+            "negative": (meta or {}).get("negative", ""),
+            "steps": (meta or {}).get("steps"),
+            "cfg_scale": (meta or {}).get("cfg_scale"),
+            "sampler": (meta or {}).get("sampler"),
+            "width": (meta or {}).get("width"),
+            "height": (meta or {}).get("height"),
+            "seed": (meta or {}).get("seed"),
+        } if meta else None,
+        "saved_json": data,
     }
 
 
@@ -719,6 +774,8 @@ async def save_json_endpoint(request: Request):
     body = await request.json()
     video_prompt = body.get("video_prompt", "")
     additional_instruction = body.get("additional_instruction", "")
+    comfyui_workflow = body.get("comfyui_workflow", "")
+    video_workflow = body.get("video_workflow", "")
 
     image_path = _state.get("current_image_path", "")
     if not image_path:
@@ -747,6 +804,8 @@ async def save_json_endpoint(request: Request):
         },
         "prompt": video_prompt,
         "additional_instruction": additional_instruction,
+        "comfyui_workflow": comfyui_workflow,
+        "video_workflow": video_workflow,
     }
 
     json_path = p.parent / (p.stem + ".json")
