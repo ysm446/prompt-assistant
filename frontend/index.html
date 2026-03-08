@@ -214,32 +214,16 @@
             <div id="save-json-status" class="status-small" style="flex:2; display:flex; align-items:center; padding:0 6px;"></div>
           </div>
 
-          <!-- VRAM accordion -->
-          <details class="accordion">
-            <summary>VRAM</summary>
-            <div class="accordion-body">
-              <div id="vram-status" class="status-small"></div>
-              <div class="btn-row">
-                <button id="free-qwen-btn" class="btn btn-secondary">LLM 解放</button>
-                <button id="free-comfy-btn" class="btn btn-secondary">ComfyUI 解放</button>
-              </div>
-              <label class="checkbox-label">
-                <input type="checkbox" id="unload-llm-before-video">
-                動画生成前にLLMのメモリを解放する
-              </label>
-            </div>
-          </details>
+          <label class="field-label">動画ワークフロー</label>
+          <div class="field-row">
+            <select id="video-workflow" class="select" style="flex:1"></select>
+            <button class="btn btn-icon" id="open-video-workflow-folder-btn" title="ワークフローフォルダを開く">📁</button>
+          </div>
 
           <!-- 動画生成パラメータ accordion -->
           <details class="accordion">
             <summary>動画生成パラメータ</summary>
             <div class="accordion-body">
-              <label class="field-label">動画ワークフロー</label>
-              <div class="field-row">
-                <select id="video-workflow" class="select" style="flex:1"></select>
-                <button class="btn btn-icon" id="open-video-workflow-folder-btn" title="ワークフローフォルダを開く">📁</button>
-              </div>
-
               <div class="slider-row">
                 <label>Width</label>
                 <input type="range" id="video-width" min="240" max="1920" step="16" value="848">
@@ -254,17 +238,15 @@
                 <button class="btn btn-secondary btn-sm" id="video-res-640">640 × 480</button>
                 <button class="btn btn-secondary btn-sm" id="video-res-1280">1280 × 720</button>
               </div>
+
+              <label class="field-label" style="margin-top:6px">Seed（-1 でランダム）</label>
+              <div class="seed-row">
+                <input type="number" id="video-seed" class="number-input seed-input" value="-1">
+                <button class="btn btn-icon" id="video-seed-random-btn" title="ランダム">🎲</button>
+                <button class="btn btn-icon" id="video-seed-from-video-btn" title="動画から取得">♻️</button>
+              </div>
             </div>
           </details>
-
-          <div class="seed-controls">
-            <label class="field-label">Seed（-1 でランダム）</label>
-            <div class="seed-row">
-              <input type="number" id="video-seed" class="number-input seed-input" value="-1">
-              <button class="btn btn-icon" id="video-seed-random-btn" title="ランダム">🎲</button>
-              <button class="btn btn-icon" id="video-seed-from-video-btn" title="動画から取得">♻️</button>
-            </div>
-          </div>
         </div>
 
         <!-- 右: 追加指示 + セクション + プロンプト生成 -->
@@ -285,6 +267,22 @@
           <button id="generate-video-prompt-btn" class="btn btn-primary" style="margin-top:8px; flex:none">
             動画プロンプト生成
           </button>
+
+          <!-- VRAM accordion -->
+          <details class="accordion">
+            <summary>VRAM</summary>
+            <div class="accordion-body">
+              <div id="vram-status" class="status-small"></div>
+              <div class="btn-row">
+                <button id="free-qwen-btn" class="btn btn-secondary">LLM 解放</button>
+                <button id="free-comfy-btn" class="btn btn-secondary">ComfyUI 解放</button>
+              </div>
+              <label class="checkbox-label">
+                <input type="checkbox" id="unload-llm-before-video">
+                動画生成前にLLMのメモリを解放する
+              </label>
+            </div>
+          </details>
         </div>
       </div>
     </div>

@@ -797,6 +797,8 @@ async function generateVideoPrompt() {
 
   const btn = document.getElementById('generate-video-prompt-btn');
   btn.disabled = true;
+  const videoPromptTextarea = document.getElementById('video-prompt');
+  videoPromptTextarea.classList.add('generating');
 
   const sections = Array.from(
     document.querySelectorAll('input[name="video-section"]:checked')
@@ -824,6 +826,7 @@ async function generateVideoPrompt() {
   } finally {
     btn.disabled = false;
     videoPromptAbortCtrl = null;
+    videoPromptTextarea.classList.remove('generating');
   }
 }
 

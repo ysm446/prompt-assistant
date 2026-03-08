@@ -557,6 +557,10 @@ body.is-resizing {
   width: 100%;
 }
 
+.textarea-wrap .textarea.generating {
+  animation: image-pulse 1.2s ease-in-out infinite;
+}
+
 .btn-copy {
   position: absolute;
   top: 6px;
