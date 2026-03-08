@@ -557,6 +557,7 @@ function setImageBusy(busy) {
 function setVideoBusy(busy) {
   document.getElementById('generate-video-btn').disabled = false;
   document.getElementById('stop-video-btn').disabled = !busy;
+  document.querySelector('.video-area').classList.toggle('generating', busy);
 }
 
 async function processNextJob() {

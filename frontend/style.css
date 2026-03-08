@@ -166,6 +166,12 @@ html, body {
 }
 
 /* ---- Video area ---- */
+@keyframes video-pulse {
+  0%   { border-color: var(--border); box-shadow: none; }
+  50%  { border-color: #f80; box-shadow: 0 0 12px 2px rgba(255,136,0,.55); }
+  100% { border-color: var(--border); box-shadow: none; }
+}
+
 .video-area {
   width: 100%;
   height: 400px;
@@ -178,6 +184,11 @@ html, body {
   overflow: hidden;
   flex-shrink: 0;
   box-shadow: var(--shadow);
+  transition: border-color .3s;
+}
+
+.video-area.generating {
+  animation: video-pulse 1.2s ease-in-out infinite;
 }
 
 /* ---- Status boxes ---- */
