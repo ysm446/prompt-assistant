@@ -799,6 +799,7 @@ async function generateVideoPrompt() {
   btn.disabled = true;
   const videoPromptTextarea = document.getElementById('video-prompt');
   videoPromptTextarea.classList.add('generating');
+  document.getElementById('video-status').textContent = '動画プロンプトを生成中...';
 
   const sections = Array.from(
     document.querySelectorAll('input[name="video-section"]:checked')
@@ -817,12 +818,14 @@ async function generateVideoPrompt() {
       if (data.type === 'token') {
         accumulated += data.content;
         document.getElementById('video-prompt').value = accumulated;
+        document.getElementById('video-status').textContent = '動画プロンプトを生成中...';
       } else if (data.type === 'status') {
         document.getElementById('video-status').textContent = data.content;
       } else if (data.type === 'error') {
         document.getElementById('video-status').textContent = `エラー: ${data.content}`;
       }
     }, videoPromptAbortCtrl.signal);
+    document.getElementById('video-status').textContent = '動画プロンプト完了';
   } finally {
     btn.disabled = false;
     videoPromptAbortCtrl = null;
