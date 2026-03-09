@@ -170,6 +170,7 @@ function getSettings() {
     video_width: parseInt(document.getElementById('video-width').value),
     video_height: parseInt(document.getElementById('video-height').value),
     video_seed: parseInt(document.getElementById('video-seed').value) || -1,
+    video_frames: parseInt(document.getElementById('video-frames').value) || 81,
   };
 }
 
@@ -186,7 +187,7 @@ function scheduleSave() {
 
 // 変更イベントで自動保存をスケジュール
 ['positive-prompt', 'negative-prompt',
-  'seed-input', 'comfyui-seed', 'video-seed',
+  'seed-input', 'comfyui-seed', 'video-seed', 'video-frames',
   'image-save-path', 'video-save-path',
   'model-dropdown', 'sampler-dropdown', 'comfyui-workflow', 'video-workflow',
 ].forEach(id => {
@@ -260,6 +261,7 @@ async function loadSettings() {
   document.getElementById('video-height').value = s.video_height ?? 480;
   document.getElementById('video-height-val').textContent = s.video_height ?? 480;
   document.getElementById('video-seed').value = s.video_seed ?? -1;
+  document.getElementById('video-frames').value = s.video_frames ?? 81;
 
   // Save video path
   document.getElementById('video-save-path').value = s.video_save_path || './outputs/videos';
@@ -848,6 +850,7 @@ document.getElementById('generate-video-btn').addEventListener('click', () => {
     seed: parseInt(document.getElementById('video-seed').value) || -1,
     width: parseInt(document.getElementById('video-width').value),
     height: parseInt(document.getElementById('video-height').value),
+    frames: parseInt(document.getElementById('video-frames').value) || 81,
     video_save_path: document.getElementById('video-save-path').value,
     unload_llm_before_video: document.getElementById('unload-llm-before-video').checked,
   }});

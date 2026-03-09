@@ -177,6 +177,14 @@ _LATENT_IMAGE_NODES = (
 )
 
 
+_VIDEO_LATENT_NODES = (
+    "EmptyHunyuanLatentVideo",
+    "WanImageToVideo",
+    "WanVideoToVideo",
+    "EmptyWanLatentVideo",
+)
+
+
 def _patch_workflow(
     workflow: dict,
     positive: str,
@@ -184,34 +192,48 @@ def _patch_workflow(
     seed: int = -1,
     width: int | None = None,
     height: int | None = None,
+    frames: int | None = None,
     input_image_name: str | None = None,
 ) -> dict:
     """
     ワークフロー JSON のプロンプト・seed・サイズを差し替える。
 
     CLIPTextEncode:
-      - タイトルに "negative"/"ネガティブ"/"neg" → negative
+      - タイトルに "negative"/"ネガティブ"/"neg" を含む、または他ノードの "negative" 入力に接続 → negative
       - それ以外 → positive
-    KSampler / KSamplerAdvanced:
-      - seed != -1 なら上書き（-1 はワークフロー側の値をそのまま使う）
-    EmptyLatentImage 系:
-      - width / height が None でなければ上書き
+    KSampler / KSamplerAdvanced / RandomNoise:
+      - seed / noise_seed を上書き
+    EmptyLatentImage 系 (WAN):
+      - width / height / length / num_frames を上書き
+    PrimitiveInt (LTX など):
+      - title が "width"/"height"/"length"/"frames" に一致するノードの value を上書き
     """
     import copy
     patched = copy.deepcopy(workflow)
 
     actual_seed = random.randint(0, 2**32 - 1) if seed == -1 else seed
 
-    _neg_keywords = ("negative", "ネガティブ", "neg")
+    # CLIPTextEncode のうち、他ノードの "negative" 入力に接続されているものを特定
+    negative_node_ids: set[str] = set()
     for node in patched.values():
+        if not isinstance(node, dict):
+            continue
+        for field, val in node.get("inputs", {}).items():
+            if field == "negative" and isinstance(val, list) and len(val) >= 1:
+                negative_node_ids.add(str(val[0]))
+
+    _neg_keywords = ("negative", "ネガティブ", "neg")
+    _frames_titles = ("length", "frames", "num frames", "frame count")
+
+    for node_id, node in patched.items():
         if not isinstance(node, dict):
             continue
         class_type = node.get("class_type", "")
         inputs = node.get("inputs", {})
+        title = (node.get("_meta", {}).get("title", "") or "").lower()
 
         if class_type == "CLIPTextEncode":
-            title = (node.get("_meta", {}).get("title", "") or "").lower()
-            if any(kw in title for kw in _neg_keywords):
+            if any(kw in title for kw in _neg_keywords) or node_id in negative_node_ids:
                 inputs["text"] = negative
             else:
                 inputs["text"] = positive
@@ -222,11 +244,29 @@ def _patch_workflow(
             if "noise_seed" in inputs:
                 inputs["noise_seed"] = actual_seed
 
+        elif class_type == "RandomNoise":
+            if "noise_seed" in inputs:
+                inputs["noise_seed"] = actual_seed
+
         elif class_type in _LATENT_IMAGE_NODES:
             if width is not None:
                 inputs["width"] = width
             if height is not None:
                 inputs["height"] = height
+            if frames is not None and class_type in _VIDEO_LATENT_NODES:
+                if "length" in inputs:
+                    inputs["length"] = frames
+                if "num_frames" in inputs:
+                    inputs["num_frames"] = frames
+
+        elif class_type == "PrimitiveInt":
+            # LTX など、PrimitiveInt ノードでサイズ・フレーム数を管理するワークフロー向け
+            if width is not None and title == "width":
+                inputs["value"] = width
+            elif height is not None and title == "height":
+                inputs["value"] = height
+            elif frames is not None and title in _frames_titles:
+                inputs["value"] = frames
 
         elif class_type == "LoadImage" and input_image_name is not None:
             inputs["image"] = input_image_name
@@ -241,6 +281,7 @@ def generate_image(
     seed: int = -1,
     width: int | None = None,
     height: int | None = None,
+    frames: int | None = None,
     input_image: Image.Image | None = None,
 ) -> "Image.Image | str":
     """
@@ -266,7 +307,7 @@ def generate_image(
     patched = _patch_workflow(
         workflow, positive, negative,
         seed=actual_seed, width=width, height=height,
-        input_image_name=input_image_name,
+        frames=frames, input_image_name=input_image_name,
     )
 
     client_id = str(uuid.uuid4())

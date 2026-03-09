@@ -36,6 +36,7 @@ DEFAULT_SETTINGS = {
     "video_width": None,
     "video_height": None,
     "video_seed": -1,
+    "video_frames": 81,
 }
 
 

@@ -195,7 +195,7 @@
           <div id="video-file-path" class="status-small" style="word-break:break-all"></div>
         </div>
 
-        <!-- 中: 動画プロンプト + 生成/停止 + VRAM -->
+        <!-- 中: 動画プロンプト + 追加指示 + セクション + プロンプト生成 + JSON保存 + 動画生成/停止 -->
         <div class="col">
           <label class="field-label">動画プロンプト</label>
           <div class="textarea-wrap">
@@ -209,11 +209,31 @@
             <button id="stop-video-btn" class="btn btn-secondary">停止</button>
           </div>
 
-          <div class="btn-row">
+          <label class="field-label">追加指示</label>
+          <textarea id="video-extra-instruction" class="textarea" rows="3"
+            placeholder="例: slowly zoom in, hair flowing in the wind, cinematic lighting"></textarea>
+
+          <label class="field-label" style="margin-top:8px">生成するセクション</label>
+          <div id="video-sections" class="checkbox-group" style="flex-direction:row; flex-wrap:wrap; gap:8px 16px;">
+            <label class="checkbox-label"><input type="checkbox" name="video-section" value="scene" checked> scene</label>
+            <label class="checkbox-label"><input type="checkbox" name="video-section" value="action" checked> action</label>
+            <label class="checkbox-label"><input type="checkbox" name="video-section" value="camera" checked> camera</label>
+            <label class="checkbox-label"><input type="checkbox" name="video-section" value="style" checked> style</label>
+            <label class="checkbox-label"><input type="checkbox" name="video-section" value="prompt" checked> prompt</label>
+          </div>
+
+          <button id="generate-video-prompt-btn" class="btn btn-primary" style="margin-top:8px; flex:none">
+            動画プロンプト生成
+          </button>
+
+          <div class="btn-row" style="margin-top:4px">
             <button id="save-json-btn" class="btn btn-secondary" style="flex:1">JSON保存</button>
             <div id="save-json-status" class="status-small" style="flex:2; display:flex; align-items:center; padding:0 6px;"></div>
           </div>
+        </div>
 
+        <!-- 右: 動画ワークフロー + 動画生成パラメータ + VRAM -->
+        <div class="col">
           <label class="field-label">動画ワークフロー</label>
           <div class="field-row">
             <select id="video-workflow" class="select" style="flex:1"></select>
@@ -239,6 +259,11 @@
                 <button class="btn btn-secondary btn-sm" id="video-res-1280">1280 × 720</button>
               </div>
 
+              <label class="field-label" style="margin-top:6px">フレーム数</label>
+              <div class="field-row">
+                <input type="number" id="video-frames" class="number-input" value="81" min="1" max="1000" step="1" style="width:80px">
+              </div>
+
               <label class="field-label" style="margin-top:6px">Seed（-1 でランダム）</label>
               <div class="seed-row">
                 <input type="number" id="video-seed" class="number-input seed-input" value="-1">
@@ -247,26 +272,6 @@
               </div>
             </div>
           </details>
-        </div>
-
-        <!-- 右: 追加指示 + セクション + プロンプト生成 -->
-        <div class="col">
-          <label class="field-label">追加指示</label>
-          <textarea id="video-extra-instruction" class="textarea" rows="3"
-            placeholder="例: slowly zoom in, hair flowing in the wind, cinematic lighting"></textarea>
-
-          <label class="field-label" style="margin-top:8px">生成するセクション</label>
-          <div id="video-sections" class="checkbox-group" style="flex-direction:row; flex-wrap:wrap; gap:8px 16px;">
-            <label class="checkbox-label"><input type="checkbox" name="video-section" value="scene" checked> scene</label>
-            <label class="checkbox-label"><input type="checkbox" name="video-section" value="action" checked> action</label>
-            <label class="checkbox-label"><input type="checkbox" name="video-section" value="camera" checked> camera</label>
-            <label class="checkbox-label"><input type="checkbox" name="video-section" value="style" checked> style</label>
-            <label class="checkbox-label"><input type="checkbox" name="video-section" value="prompt" checked> prompt</label>
-          </div>
-
-          <button id="generate-video-prompt-btn" class="btn btn-primary" style="margin-top:8px; flex:none">
-            動画プロンプト生成
-          </button>
 
           <!-- VRAM accordion -->
           <details class="accordion">

@@ -662,6 +662,7 @@ async def generate_video_stream(request: Request):
     seed = int(body.get("seed", -1))
     width = int(body.get("width", 848)) if body.get("width") else None
     height = int(body.get("height", 480)) if body.get("height") else None
+    frames = int(body.get("frames", 81)) if body.get("frames") else None
     save_dir = (body.get("video_save_path", "") or "").strip() or "./outputs/videos"
     unload_llm = bool(body.get("unload_llm_before_video", False))
 
@@ -688,6 +689,7 @@ async def generate_video_stream(request: Request):
                 seed=seed,
                 width=width,
                 height=height,
+                frames=frames,
                 input_image=_state["current_image"],
             ))
         except Exception as e:
